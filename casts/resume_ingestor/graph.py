@@ -21,7 +21,11 @@ Official document URL:
 from langgraph.graph import END, START, StateGraph
 
 from casts.base_graph import BaseGraph
-from casts.resume_ingestor.modules.nodes import ExtractTextNode, ParseSectionsNode
+from casts.resume_ingestor.modules.nodes import (
+    ExtractSignalsNode,
+    ExtractTextNode,
+    ParseSectionsNode,
+)
 from casts.resume_ingestor.modules.state import InputState, OutputState, State
 
 
@@ -52,9 +56,11 @@ class ResumeIngestorGraph(BaseGraph):
 
         builder.add_node("extract_text", ExtractTextNode())
         builder.add_node("parse_sections", ParseSectionsNode())
+        builder.add_node("extract_signals", ExtractSignalsNode())
         builder.add_edge(START, "extract_text")
         builder.add_edge("extract_text", "parse_sections")
-        builder.add_edge("parse_sections", END)
+        builder.add_edge("parse_sections", "extract_signals")
+        builder.add_edge("extract_signals", END)
 
         graph = builder.compile()
         graph.name = self.name

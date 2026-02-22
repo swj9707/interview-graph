@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 from casts.base_node import BaseNode
@@ -194,3 +195,101 @@ class ParseSectionsNode(BaseNode):
         }
 
         return {"sections": parsed_sections}
+
+
+class ExtractSignalsNode(BaseNode):
+    """Phase 2 node that extracts skills, projects, and keywords from sections."""
+
+    _STOPWORDS: set[str] = {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+        "using",
+        "years",
+        "year",
+        "experience",
+    }
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"signals": {"skills": [], "projects": [], "keywords": []}}
+
+        sections = state.get("sections")
+        if not isinstance(sections, dict) or not sections:
+            return {
+                "signals": {"skills": [], "projects": [], "keywords": []},
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="extract_signals",
+                        code="MISSING_SECTIONS",
+                        message="Cannot extract signals without parsed sections.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        skills = self._extract_skills(sections.get("skills", ""))
+        projects = self._extract_projects(sections.get("projects", ""))
+        keywords = self._extract_keywords(sections)
+
+        return {
+            "signals": {
+                "skills": skills,
+                "projects": projects,
+                "keywords": keywords,
+            }
+        }
+
+    def _extract_skills(self, text: str) -> list[str]:
+        if not isinstance(text, str) or not text.strip():
+            return []
+        normalized = text.replace("\n", ",")
+        candidates = [part.strip(" -\t") for part in normalized.split(",")]
+        return self._dedupe([token for token in candidates if token])
+
+    def _extract_projects(self, text: str) -> list[str]:
+        if not isinstance(text, str) or not text.strip():
+            return []
+        lines = [line.strip(" -*\t") for line in text.splitlines()]
+        candidates = [line for line in lines if line]
+        return self._dedupe(candidates)
+
+    def _extract_keywords(self, sections: dict[str, object]) -> list[str]:
+        corpus = " ".join(
+            str(value) for value in sections.values() if isinstance(value, str)
+        ).lower()
+        tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", corpus)
+        filtered = [token for token in tokens if token not in self._STOPWORDS]
+
+        ranked = Counter(filtered)
+        # Deterministic ordering: highest frequency first, then lexical.
+        sorted_tokens = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
+        return [token for token, _count in sorted_tokens[:12]]
+
+    def _dedupe(self, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for value in values:
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(value)
+        return deduped
