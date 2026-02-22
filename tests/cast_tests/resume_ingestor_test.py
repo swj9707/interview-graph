@@ -15,7 +15,8 @@ def test_graph_extracts_text_from_resume_text() -> None:
     )
 
     assert len(result["questions"]) == 15
-    assert result["markdown"] == ""
+    assert all(1 <= q["difficulty"] <= 5 for q in result["questions"])
+    assert "# Interview Questions" in result["markdown"]
     assert result["errors"] == []
 
 
@@ -24,7 +25,7 @@ def test_graph_returns_error_when_input_missing() -> None:
     result = graph.invoke({})
 
     assert result["questions"] == []
-    assert result["markdown"] == ""
+    assert result["markdown"] == "# Interview Questions"
     assert len(result["errors"]) == 1
     assert result["errors"][0]["code"] == "MISSING_INPUT"
 
@@ -46,5 +47,6 @@ def test_graph_pipeline_completes_with_sectioned_resume_text() -> None:
 
     assert len(result["questions"]) == 15
     assert result["questions"][0]["id"] == "q01"
-    assert result["markdown"] == ""
+    assert all(1 <= q["difficulty"] <= 5 for q in result["questions"])
+    assert "# Interview Questions" in result["markdown"]
     assert result["errors"] == []

@@ -366,7 +366,6 @@ class GenerateQuestionsNode(BaseNode):
 
     def _make_question(self, index: int, seed: tuple[str, str]) -> dict[str, object]:
         category, topic = seed
-        difficulty = ((index - 1) % 5) + 1
         prompt_map = {
             "tech": f"How have you applied {topic} in production, and what limitations did you face?",
             "project": f"Walk through the project '{topic}' and explain your personal contribution.",
@@ -381,7 +380,7 @@ class GenerateQuestionsNode(BaseNode):
         return {
             "id": f"q{index:02d}",
             "category": category if category in self._CATEGORIES else "tech",
-            "difficulty": difficulty,
+            "difficulty": 0,
             "question": question_text,
             "expected_points": [
                 "Problem context and constraints",
@@ -393,3 +392,116 @@ class GenerateQuestionsNode(BaseNode):
                 "How did you measure success for this decision?",
             ],
         }
+
+
+class RateDifficultyNode(BaseNode):
+    """Phase 3 node that assigns 1-5 difficulty ratings to questions."""
+
+    _CATEGORY_BASE: dict[str, int] = {
+        "tech": 2,
+        "project": 3,
+        "system": 4,
+        "deep-dive": 4,
+    }
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"questions": []}
+
+        questions = state.get("questions")
+        if not isinstance(questions, list) or not questions:
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="rate_difficulty",
+                        code="MISSING_QUESTIONS",
+                        message="Cannot rate difficulty without generated questions.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        rated_questions: list[dict[str, object]] = []
+        for index, question in enumerate(questions):
+            if not isinstance(question, dict):
+                continue
+
+            category = str(question.get("category", "tech"))
+            base = self._CATEGORY_BASE.get(category, 3)
+            variation = index % 3
+            difficulty = max(1, min(5, base - 1 + variation))
+
+            updated = dict(question)
+            updated["difficulty"] = difficulty
+            rated_questions.append(updated)
+
+        return {"questions": rated_questions}
+
+
+class FormatOutputNode(BaseNode):
+    """Final node that renders markdown from structured questions."""
+
+    def execute(self, state):
+        questions = state.get("questions")
+        errors = state.get("errors")
+
+        if not isinstance(errors, list):
+            errors = []
+
+        if not isinstance(questions, list):
+            return {
+                "questions": [],
+                "markdown": "",
+                "errors": errors
+                + [
+                    _error_item(
+                        node="format_output",
+                        code="INVALID_QUESTIONS",
+                        message="Questions payload is not a list.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        markdown = self._render_markdown(questions)
+        return {"questions": questions, "markdown": markdown}
+
+    def _render_markdown(self, questions: list[object]) -> str:
+        lines: list[str] = ["# Interview Questions", ""]
+
+        for item in questions:
+            if not isinstance(item, dict):
+                continue
+
+            question_id = str(item.get("id", ""))
+            category = str(item.get("category", "tech"))
+            difficulty = item.get("difficulty", "N/A")
+            question_text = str(item.get("question", ""))
+            expected_points = item.get("expected_points", [])
+            followups = item.get("followups", [])
+
+            lines.append(f"## {question_id} [{category}] (Difficulty: {difficulty})")
+            lines.append(question_text)
+
+            lines.append("")
+            lines.append("Expected points:")
+            if isinstance(expected_points, list) and expected_points:
+                for point in expected_points:
+                    lines.append(f"- {point}")
+            else:
+                lines.append("- N/A")
+
+            lines.append("")
+            lines.append("Follow-ups:")
+            if isinstance(followups, list) and followups:
+                for followup in followups:
+                    lines.append(f"- {followup}")
+            else:
+                lines.append("- N/A")
+
+            lines.append("")
+
+        return "\n".join(lines).rstrip()

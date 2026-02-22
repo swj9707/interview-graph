@@ -5,8 +5,10 @@ from __future__ import annotations
 from casts.resume_ingestor.modules.nodes import (
     ExtractSignalsNode,
     ExtractTextNode,
+    FormatOutputNode,
     GenerateQuestionsNode,
     ParseSectionsNode,
+    RateDifficultyNode,
 )
 
 
@@ -101,7 +103,51 @@ def test_generate_questions_node_creates_15_structured_items() -> None:
     first = result["questions"][0]
     assert first["id"] == "q01"
     assert first["category"] in {"tech", "project", "system", "deep-dive"}
-    assert 1 <= first["difficulty"] <= 5
+    assert first["difficulty"] == 0
     assert isinstance(first["question"], str)
     assert len(first["expected_points"]) >= 1
     assert len(first["followups"]) >= 1
+
+
+def test_rate_difficulty_node_assigns_1_to_5_scale() -> None:
+    node = RateDifficultyNode()
+    generated_questions = [
+        {
+            "id": f"q{idx:02d}",
+            "category": "tech" if idx % 2 == 0 else "deep-dive",
+            "difficulty": 0,
+            "question": f"Question {idx}",
+            "expected_points": ["Point A"],
+            "followups": ["Follow-up A"],
+        }
+        for idx in range(1, 16)
+    ]
+    result = node({"questions": generated_questions, "errors": []})
+
+    assert len(result["questions"]) == 15
+    difficulties = [q["difficulty"] for q in result["questions"]]
+    assert all(isinstance(d, int) and 1 <= d <= 5 for d in difficulties)
+
+
+def test_format_output_node_renders_markdown() -> None:
+    node = FormatOutputNode()
+    result = node(
+        {
+            "questions": [
+                {
+                    "id": "q01",
+                    "category": "tech",
+                    "difficulty": 3,
+                    "question": "How did you design your API error model?",
+                    "expected_points": ["Consistency", "Client usability"],
+                    "followups": ["How did you version errors?"],
+                }
+            ],
+            "errors": [],
+        }
+    )
+
+    assert result["questions"][0]["id"] == "q01"
+    assert "# Interview Questions" in result["markdown"]
+    assert "Difficulty: 3" in result["markdown"]
+    assert "Expected points:" in result["markdown"]
