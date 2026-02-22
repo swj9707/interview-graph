@@ -439,3 +439,69 @@ class RateDifficultyNode(BaseNode):
             rated_questions.append(updated)
 
         return {"questions": rated_questions}
+
+
+class FormatOutputNode(BaseNode):
+    """Final node that renders markdown from structured questions."""
+
+    def execute(self, state):
+        questions = state.get("questions")
+        errors = state.get("errors")
+
+        if not isinstance(errors, list):
+            errors = []
+
+        if not isinstance(questions, list):
+            return {
+                "questions": [],
+                "markdown": "",
+                "errors": errors
+                + [
+                    _error_item(
+                        node="format_output",
+                        code="INVALID_QUESTIONS",
+                        message="Questions payload is not a list.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        markdown = self._render_markdown(questions)
+        return {"questions": questions, "markdown": markdown}
+
+    def _render_markdown(self, questions: list[object]) -> str:
+        lines: list[str] = ["# Interview Questions", ""]
+
+        for item in questions:
+            if not isinstance(item, dict):
+                continue
+
+            question_id = str(item.get("id", ""))
+            category = str(item.get("category", "tech"))
+            difficulty = item.get("difficulty", "N/A")
+            question_text = str(item.get("question", ""))
+            expected_points = item.get("expected_points", [])
+            followups = item.get("followups", [])
+
+            lines.append(f"## {question_id} [{category}] (Difficulty: {difficulty})")
+            lines.append(question_text)
+
+            lines.append("")
+            lines.append("Expected points:")
+            if isinstance(expected_points, list) and expected_points:
+                for point in expected_points:
+                    lines.append(f"- {point}")
+            else:
+                lines.append("- N/A")
+
+            lines.append("")
+            lines.append("Follow-ups:")
+            if isinstance(followups, list) and followups:
+                for followup in followups:
+                    lines.append(f"- {followup}")
+            else:
+                lines.append("- N/A")
+
+            lines.append("")
+
+        return "\n".join(lines).rstrip()

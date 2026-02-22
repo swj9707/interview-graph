@@ -24,6 +24,7 @@ from casts.base_graph import BaseGraph
 from casts.resume_ingestor.modules.nodes import (
     ExtractSignalsNode,
     ExtractTextNode,
+    FormatOutputNode,
     GenerateQuestionsNode,
     ParseSectionsNode,
     RateDifficultyNode,
@@ -61,12 +62,14 @@ class ResumeIngestorGraph(BaseGraph):
         builder.add_node("extract_signals", ExtractSignalsNode())
         builder.add_node("generate_questions", GenerateQuestionsNode())
         builder.add_node("rate_difficulty", RateDifficultyNode())
+        builder.add_node("format_output", FormatOutputNode())
         builder.add_edge(START, "extract_text")
         builder.add_edge("extract_text", "parse_sections")
         builder.add_edge("parse_sections", "extract_signals")
         builder.add_edge("extract_signals", "generate_questions")
         builder.add_edge("generate_questions", "rate_difficulty")
-        builder.add_edge("rate_difficulty", END)
+        builder.add_edge("rate_difficulty", "format_output")
+        builder.add_edge("format_output", END)
 
         graph = builder.compile()
         graph.name = self.name
