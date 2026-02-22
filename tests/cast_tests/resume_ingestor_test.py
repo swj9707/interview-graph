@@ -15,6 +15,7 @@ def test_graph_extracts_text_from_resume_text() -> None:
     )
 
     assert len(result["questions"]) == 15
+    assert all(1 <= q["difficulty"] <= 5 for q in result["questions"])
     assert result["markdown"] == ""
     assert result["errors"] == []
 
@@ -46,5 +47,6 @@ def test_graph_pipeline_completes_with_sectioned_resume_text() -> None:
 
     assert len(result["questions"]) == 15
     assert result["questions"][0]["id"] == "q01"
+    assert all(1 <= q["difficulty"] <= 5 for q in result["questions"])
     assert result["markdown"] == ""
     assert result["errors"] == []
