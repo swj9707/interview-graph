@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from casts.resume_ingestor.modules.nodes import ExtractTextNode, ParseSectionsNode
+from casts.resume_ingestor.modules.nodes import (
+    ExtractSignalsNode,
+    ExtractTextNode,
+    ParseSectionsNode,
+)
 
 
 def test_extract_text_node_uses_inline_resume_text() -> None:
@@ -43,3 +47,37 @@ def test_parse_sections_node_returns_error_without_raw_text() -> None:
 
     assert len(result["errors"]) == 1
     assert result["errors"][0]["code"] == "MISSING_RAW_TEXT"
+
+
+def test_extract_signals_node_extracts_skills_projects_keywords() -> None:
+    node = ExtractSignalsNode()
+    result = node(
+        {
+            "sections": {
+                "summary": "Backend engineer focusing on payment platforms",
+                "skills": "Python, FastAPI, AWS, Docker",
+                "projects": (
+                    "Built fraud detection service using FastAPI\n"
+                    "Designed event-driven payment pipeline"
+                ),
+            },
+            "errors": [],
+        }
+    )
+
+    assert result["signals"]["skills"] == ["Python", "FastAPI", "AWS", "Docker"]
+    assert result["signals"]["projects"] == [
+        "Built fraud detection service using FastAPI",
+        "Designed event-driven payment pipeline",
+    ]
+    assert "fastapi" in result["signals"]["keywords"]
+    assert "payment" in result["signals"]["keywords"]
+
+
+def test_extract_signals_node_returns_error_without_sections() -> None:
+    node = ExtractSignalsNode()
+    result = node({"sections": {}, "errors": []})
+
+    assert result["signals"] == {"skills": [], "projects": [], "keywords": []}
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["code"] == "MISSING_SECTIONS"
