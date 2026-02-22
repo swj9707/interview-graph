@@ -1,0 +1,12 @@
+# Project configuration file
+# This file defines the dependencies and metadata for the package.
+# The Python package manager (uv) uses this file to install required packages.
+# To add a dependency to this package, use `uv add <<package_name>> --package resume-ingestor`.
+
+[project]
+name = "resume-ingestor"
+version = "0.1.0"
+description = "Resume Ingestor Graph"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []

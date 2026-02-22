@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "resume-ingestor": "./casts/resume_ingestor/graph.py:resume_ingestor_graph"
+  },
+  "env": ".env"
+}
