@@ -1,19 +1,45 @@
-"""Test the nodes for the Sam graph.
-
-Official document URL: https://docs.langchain.com/oss/python/langgraph/test"""
+"""Test nodes for the Resume Ingestor graph."""
 
 from __future__ import annotations
 
-from casts.sam.modules.nodes import SampleNode, AsyncSampleNode
+from casts.resume_ingestor.modules.nodes import ExtractTextNode, ParseSectionsNode
 
 
-def test_base_node_calls_execute() -> None:
-    node = SampleNode(verbose=True)
-    result = node()
-    assert result == {"message": "Welcome to the Act!"}
+def test_extract_text_node_uses_inline_resume_text() -> None:
+    node = ExtractTextNode()
+    result = node({"resume_text": "Python backend engineer"})
+
+    assert result["raw_text"] == "Python backend engineer"
+    assert result["errors"] == []
 
 
-async def test_async_base_node_calls_execute() -> None:
-    node = AsyncSampleNode(verbose=True)
-    result = await node()
-    assert result == {"message": "Welcome to the Act!"}
+def test_parse_sections_node_splits_by_headers() -> None:
+    node = ParseSectionsNode()
+    result = node(
+        {
+            "raw_text": (
+                "Summary\n"
+                "Backend engineer with 6 years of experience\n"
+                "Skills\n"
+                "Python, FastAPI, AWS\n"
+                "Projects\n"
+                "Built interview automation service\n"
+            ),
+            "errors": [],
+        }
+    )
+
+    assert "sections" in result
+    assert (
+        result["sections"]["summary"] == "Backend engineer with 6 years of experience"
+    )
+    assert result["sections"]["skills"] == "Python, FastAPI, AWS"
+    assert result["sections"]["projects"] == "Built interview automation service"
+
+
+def test_parse_sections_node_returns_error_without_raw_text() -> None:
+    node = ParseSectionsNode()
+    result = node({"raw_text": "", "errors": []})
+
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["code"] == "MISSING_RAW_TEXT"
