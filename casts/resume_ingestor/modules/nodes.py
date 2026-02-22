@@ -293,3 +293,103 @@ class ExtractSignalsNode(BaseNode):
             seen.add(key)
             deduped.append(value)
         return deduped
+
+
+class GenerateQuestionsNode(BaseNode):
+    """Phase 3 node that creates 15 structured interview questions."""
+
+    _CATEGORIES: tuple[str, ...] = ("tech", "project", "system", "deep-dive")
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"questions": []}
+
+        signals = state.get("signals")
+        if not isinstance(signals, dict):
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="generate_questions",
+                        code="MISSING_SIGNALS",
+                        message="Cannot generate questions without extracted signals.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        skills = self._as_list(signals.get("skills"))
+        projects = self._as_list(signals.get("projects"))
+        keywords = self._as_list(signals.get("keywords"))
+
+        prompts = self._build_prompt_seeds(skills, projects, keywords)
+        questions = [
+            self._make_question(index=idx + 1, seed=seed)
+            for idx, seed in enumerate(prompts[:15])
+        ]
+        return {"questions": questions}
+
+    def _as_list(self, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, str) and item.strip()]
+
+    def _build_prompt_seeds(
+        self, skills: list[str], projects: list[str], keywords: list[str]
+    ) -> list[tuple[str, str]]:
+        seeds: list[tuple[str, str]] = []
+
+        for skill in skills:
+            seeds.append(("tech", f"{skill}"))
+            seeds.append(("system", f"{skill}"))
+
+        for project in projects:
+            seeds.append(("project", f"{project}"))
+            seeds.append(("deep-dive", f"{project}"))
+
+        for keyword in keywords:
+            seeds.append(("deep-dive", f"{keyword}"))
+
+        if not seeds:
+            seeds = [
+                ("tech", "core backend skills"),
+                ("project", "recent project ownership"),
+                ("system", "service architecture"),
+                ("deep-dive", "engineering trade-offs"),
+            ]
+
+        while len(seeds) < 15:
+            seeds.extend(seeds)
+        return seeds
+
+    def _make_question(self, index: int, seed: tuple[str, str]) -> dict[str, object]:
+        category, topic = seed
+        difficulty = ((index - 1) % 5) + 1
+        prompt_map = {
+            "tech": f"How have you applied {topic} in production, and what limitations did you face?",
+            "project": f"Walk through the project '{topic}' and explain your personal contribution.",
+            "system": f"If you redesign a system centered on {topic}, what architecture would you choose and why?",
+            "deep-dive": f"Describe a hard technical decision involving {topic} and how you validated it.",
+        }
+        question_text = prompt_map.get(
+            category,
+            f"Explain your practical experience with {topic} and key outcomes.",
+        )
+
+        return {
+            "id": f"q{index:02d}",
+            "category": category if category in self._CATEGORIES else "tech",
+            "difficulty": difficulty,
+            "question": question_text,
+            "expected_points": [
+                "Problem context and constraints",
+                "Technical choices and trade-offs",
+                "Measured outcome and lessons learned",
+            ],
+            "followups": [
+                "What would you do differently now?",
+                "How did you measure success for this decision?",
+            ],
+        }

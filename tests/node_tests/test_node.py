@@ -5,6 +5,7 @@ from __future__ import annotations
 from casts.resume_ingestor.modules.nodes import (
     ExtractSignalsNode,
     ExtractTextNode,
+    GenerateQuestionsNode,
     ParseSectionsNode,
 )
 
@@ -81,3 +82,26 @@ def test_extract_signals_node_returns_error_without_sections() -> None:
     assert result["signals"] == {"skills": [], "projects": [], "keywords": []}
     assert len(result["errors"]) == 1
     assert result["errors"][0]["code"] == "MISSING_SECTIONS"
+
+
+def test_generate_questions_node_creates_15_structured_items() -> None:
+    node = GenerateQuestionsNode()
+    result = node(
+        {
+            "signals": {
+                "skills": ["Python", "FastAPI", "AWS"],
+                "projects": ["Built interview graph service"],
+                "keywords": ["backend", "api", "scalability"],
+            },
+            "errors": [],
+        }
+    )
+
+    assert len(result["questions"]) == 15
+    first = result["questions"][0]
+    assert first["id"] == "q01"
+    assert first["category"] in {"tech", "project", "system", "deep-dive"}
+    assert 1 <= first["difficulty"] <= 5
+    assert isinstance(first["question"], str)
+    assert len(first["expected_points"]) >= 1
+    assert len(first["followups"]) >= 1

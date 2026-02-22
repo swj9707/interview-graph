@@ -14,7 +14,7 @@ def test_graph_extracts_text_from_resume_text() -> None:
         {"resume_text": "Senior Backend Engineer with Python and AWS"}
     )
 
-    assert result["questions"] == []
+    assert len(result["questions"]) == 15
     assert result["markdown"] == ""
     assert result["errors"] == []
 
@@ -44,6 +44,7 @@ def test_graph_pipeline_completes_with_sectioned_resume_text() -> None:
         }
     )
 
-    assert result["questions"] == []
+    assert len(result["questions"]) == 15
+    assert result["questions"][0]["id"] == "q01"
     assert result["markdown"] == ""
     assert result["errors"] == []
