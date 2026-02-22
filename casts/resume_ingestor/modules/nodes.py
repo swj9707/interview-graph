@@ -366,7 +366,6 @@ class GenerateQuestionsNode(BaseNode):
 
     def _make_question(self, index: int, seed: tuple[str, str]) -> dict[str, object]:
         category, topic = seed
-        difficulty = ((index - 1) % 5) + 1
         prompt_map = {
             "tech": f"How have you applied {topic} in production, and what limitations did you face?",
             "project": f"Walk through the project '{topic}' and explain your personal contribution.",
@@ -381,7 +380,7 @@ class GenerateQuestionsNode(BaseNode):
         return {
             "id": f"q{index:02d}",
             "category": category if category in self._CATEGORIES else "tech",
-            "difficulty": difficulty,
+            "difficulty": 0,
             "question": question_text,
             "expected_points": [
                 "Problem context and constraints",
@@ -393,3 +392,50 @@ class GenerateQuestionsNode(BaseNode):
                 "How did you measure success for this decision?",
             ],
         }
+
+
+class RateDifficultyNode(BaseNode):
+    """Phase 3 node that assigns 1-5 difficulty ratings to questions."""
+
+    _CATEGORY_BASE: dict[str, int] = {
+        "tech": 2,
+        "project": 3,
+        "system": 4,
+        "deep-dive": 4,
+    }
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"questions": []}
+
+        questions = state.get("questions")
+        if not isinstance(questions, list) or not questions:
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="rate_difficulty",
+                        code="MISSING_QUESTIONS",
+                        message="Cannot rate difficulty without generated questions.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        rated_questions: list[dict[str, object]] = []
+        for index, question in enumerate(questions):
+            if not isinstance(question, dict):
+                continue
+
+            category = str(question.get("category", "tech"))
+            base = self._CATEGORY_BASE.get(category, 3)
+            variation = index % 3
+            difficulty = max(1, min(5, base - 1 + variation))
+
+            updated = dict(question)
+            updated["difficulty"] = difficulty
+            rated_questions.append(updated)
+
+        return {"questions": rated_questions}
