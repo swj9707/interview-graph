@@ -1,65 +1,122 @@
-"""[Required] Node implementations for the Resume Ingestor graph.
+"""Node implementations for the Resume Ingestor graph."""
 
-Guidelines:
-    - Derive each node from :class:`BaseNode` or :class:`AsyncBaseNode`.
-    - Implement :meth:`execute` to process state and return updates.
-    - Choose your node signature based on what you need:
-      * Simple: `def execute(self, state)` - Only needs state
-      * With config: `def execute(self, state, config)` - Needs thread_id, tags
-      * With runtime: `def execute(self, state, runtime)` - Needs store, stream
-      * Full: `def execute(self, state, config, runtime)` - Needs everything
-    - Use `self.log()` for debugging when `verbose=True`.
+from __future__ import annotations
 
-Official document URL:
-    - Nodes: https://docs.langchain.com/oss/python/langgraph/graph-api#nodes
-"""
+from pathlib import Path
 
-from langchain_core.messages import AIMessage
-
-from casts.base_node import AsyncBaseNode, BaseNode
+from casts.base_node import BaseNode
 
 
-class SampleNode(BaseNode):
-    """Simple sync node - only uses state.
+def _error_item(
+    node: str, code: str, message: str, retryable: bool
+) -> dict[str, object]:
+    return {
+        "node": node,
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+    }
 
-    Attributes:
-        name: Canonical name of the node (class name by default).
-        verbose: Flag indicating whether detailed logging is enabled.
+
+class ExtractTextNode(BaseNode):
+    """Phase 1 node that loads raw resume text from input.
+
+    MVP behavior:
+    - Uses `resume_text` directly when provided.
+    - Falls back to reading text from `resume_path`.
+    - Returns structured error metadata when extraction cannot proceed.
     """
-
-    def __init__(self):
-        super().__init__()
 
     def execute(self, state):
-        """Execute the sample node.
+        resume_text = state.get("resume_text")
+        resume_path = state.get("resume_path")
 
-        Args:
-            state: Current graph state.
+        if isinstance(resume_text, str) and resume_text.strip():
+            return {
+                "raw_text": resume_text.strip(),
+                "sections": {},
+                "signals": {"skills": [], "projects": [], "keywords": []},
+                "questions": [],
+                "markdown": "",
+                "errors": [],
+            }
 
-        Returns:
-            dict: State updates (must be a dict)
-        """
-        return {"messages": [AIMessage(content="Welcome to the Act! by Sync Node")]}
+        if isinstance(resume_path, str) and resume_path.strip():
+            path = Path(resume_path)
+            if not path.exists() or not path.is_file():
+                return {
+                    "raw_text": "",
+                    "sections": {},
+                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "questions": [],
+                    "markdown": "",
+                    "errors": [
+                        _error_item(
+                            node="extract_text",
+                            code="FILE_NOT_FOUND",
+                            message="Provided resume_path does not exist.",
+                            retryable=False,
+                        )
+                    ],
+                }
 
+            try:
+                loaded_text = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                return {
+                    "raw_text": "",
+                    "sections": {},
+                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "questions": [],
+                    "markdown": "",
+                    "errors": [
+                        _error_item(
+                            node="extract_text",
+                            code="READ_FAILED",
+                            message="Failed to read resume_path as UTF-8 text.",
+                            retryable=True,
+                        )
+                    ],
+                }
 
-class AsyncSampleNode(AsyncBaseNode):
-    """Simple async node - only uses state.
+            if not loaded_text:
+                return {
+                    "raw_text": "",
+                    "sections": {},
+                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "questions": [],
+                    "markdown": "",
+                    "errors": [
+                        _error_item(
+                            node="extract_text",
+                            code="EMPTY_TEXT",
+                            message="No text content was extracted from resume input.",
+                            retryable=True,
+                        )
+                    ],
+                }
 
-    Attributes:
-        name: Canonical name of the node (class name by default).
-        verbose: Flag indicating whether detailed logging is enabled.
-    """
+            return {
+                "raw_text": loaded_text,
+                "sections": {},
+                "signals": {"skills": [], "projects": [], "keywords": []},
+                "questions": [],
+                "markdown": "",
+                "errors": [],
+            }
 
-    def __init__(self):
-        super().__init__()
-
-    async def execute(self, state):
-        """Execute the sample node.
-
-        Args:
-            state: Current graph state.
-
-        Returns:
-            dict: State updates (must be a dict)
-        """
-        return {"messages": [AIMessage(content="Welcome to the Act! by Async Node")]}
+        return {
+            "raw_text": "",
+            "sections": {},
+            "signals": {"skills": [], "projects": [], "keywords": []},
+            "questions": [],
+            "markdown": "",
+            "errors": [
+                _error_item(
+                    node="extract_text",
+                    code="MISSING_INPUT",
+                    message="Provide either resume_text or resume_path.",
+                    retryable=False,
+                )
+            ],
+        }
