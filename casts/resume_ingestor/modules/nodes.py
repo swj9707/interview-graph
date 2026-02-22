@@ -1,65 +1,507 @@
-"""[Required] Node implementations for the Resume Ingestor graph.
+"""Node implementations for the Resume Ingestor graph."""
 
-Guidelines:
-    - Derive each node from :class:`BaseNode` or :class:`AsyncBaseNode`.
-    - Implement :meth:`execute` to process state and return updates.
-    - Choose your node signature based on what you need:
-      * Simple: `def execute(self, state)` - Only needs state
-      * With config: `def execute(self, state, config)` - Needs thread_id, tags
-      * With runtime: `def execute(self, state, runtime)` - Needs store, stream
-      * Full: `def execute(self, state, config, runtime)` - Needs everything
-    - Use `self.log()` for debugging when `verbose=True`.
+from __future__ import annotations
 
-Official document URL:
-    - Nodes: https://docs.langchain.com/oss/python/langgraph/graph-api#nodes
-"""
+import re
+from collections import Counter
+from pathlib import Path
 
-from langchain_core.messages import AIMessage
-
-from casts.base_node import AsyncBaseNode, BaseNode
+from casts.base_node import BaseNode
 
 
-class SampleNode(BaseNode):
-    """Simple sync node - only uses state.
+def _error_item(
+    node: str, code: str, message: str, retryable: bool
+) -> dict[str, object]:
+    return {
+        "node": node,
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+    }
 
-    Attributes:
-        name: Canonical name of the node (class name by default).
-        verbose: Flag indicating whether detailed logging is enabled.
+
+class ExtractTextNode(BaseNode):
+    """Phase 1 node that loads raw resume text from input.
+
+    MVP behavior:
+    - Uses `resume_text` directly when provided.
+    - Falls back to reading text from `resume_path`.
+    - Returns structured error metadata when extraction cannot proceed.
     """
-
-    def __init__(self):
-        super().__init__()
 
     def execute(self, state):
-        """Execute the sample node.
+        resume_text = state.get("resume_text")
+        resume_path = state.get("resume_path")
 
-        Args:
-            state: Current graph state.
+        if isinstance(resume_text, str) and resume_text.strip():
+            return {
+                "raw_text": resume_text.strip(),
+                "sections": {},
+                "signals": {"skills": [], "projects": [], "keywords": []},
+                "questions": [],
+                "markdown": "",
+                "errors": [],
+            }
 
-        Returns:
-            dict: State updates (must be a dict)
-        """
-        return {"messages": [AIMessage(content="Welcome to the Act! by Sync Node")]}
+        if isinstance(resume_path, str) and resume_path.strip():
+            path = Path(resume_path)
+            if not path.exists() or not path.is_file():
+                return {
+                    "raw_text": "",
+                    "sections": {},
+                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "questions": [],
+                    "markdown": "",
+                    "errors": [
+                        _error_item(
+                            node="extract_text",
+                            code="FILE_NOT_FOUND",
+                            message="Provided resume_path does not exist.",
+                            retryable=False,
+                        )
+                    ],
+                }
+
+            try:
+                loaded_text = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                return {
+                    "raw_text": "",
+                    "sections": {},
+                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "questions": [],
+                    "markdown": "",
+                    "errors": [
+                        _error_item(
+                            node="extract_text",
+                            code="READ_FAILED",
+                            message="Failed to read resume_path as UTF-8 text.",
+                            retryable=True,
+                        )
+                    ],
+                }
+
+            if not loaded_text:
+                return {
+                    "raw_text": "",
+                    "sections": {},
+                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "questions": [],
+                    "markdown": "",
+                    "errors": [
+                        _error_item(
+                            node="extract_text",
+                            code="EMPTY_TEXT",
+                            message="No text content was extracted from resume input.",
+                            retryable=True,
+                        )
+                    ],
+                }
+
+            return {
+                "raw_text": loaded_text,
+                "sections": {},
+                "signals": {"skills": [], "projects": [], "keywords": []},
+                "questions": [],
+                "markdown": "",
+                "errors": [],
+            }
+
+        return {
+            "raw_text": "",
+            "sections": {},
+            "signals": {"skills": [], "projects": [], "keywords": []},
+            "questions": [],
+            "markdown": "",
+            "errors": [
+                _error_item(
+                    node="extract_text",
+                    code="MISSING_INPUT",
+                    message="Provide either resume_text or resume_path.",
+                    retryable=False,
+                )
+            ],
+        }
 
 
-class AsyncSampleNode(AsyncBaseNode):
-    """Simple async node - only uses state.
+class ParseSectionsNode(BaseNode):
+    """Phase 2 node that maps raw resume text to logical sections."""
 
-    Attributes:
-        name: Canonical name of the node (class name by default).
-        verbose: Flag indicating whether detailed logging is enabled.
-    """
+    _HEADER_MAP: dict[str, str] = {
+        "summary": "summary",
+        "profile": "summary",
+        "about": "summary",
+        "skills": "skills",
+        "technical skills": "skills",
+        "experience": "experience",
+        "work experience": "experience",
+        "professional experience": "experience",
+        "projects": "projects",
+        "project": "projects",
+        "education": "education",
+        "academic background": "education",
+    }
 
-    def __init__(self):
-        super().__init__()
+    _EXPECTED_SECTIONS: tuple[str, ...] = (
+        "summary",
+        "skills",
+        "experience",
+        "projects",
+        "education",
+    )
 
-    async def execute(self, state):
-        """Execute the sample node.
+    def execute(self, state):
+        raw_text = state.get("raw_text")
+        existing_errors = list(state.get("errors", []))
 
-        Args:
-            state: Current graph state.
+        if existing_errors:
+            return {"sections": {}}
 
-        Returns:
-            dict: State updates (must be a dict)
-        """
-        return {"messages": [AIMessage(content="Welcome to the Act! by Async Node")]}
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            return {
+                "sections": {},
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="parse_sections",
+                        code="MISSING_RAW_TEXT",
+                        message="Cannot parse sections without raw_text.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        section_buffers: dict[str, list[str]] = {
+            key: [] for key in self._EXPECTED_SECTIONS
+        }
+        current_section = "summary"
+
+        for line in raw_text.splitlines():
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+
+            normalized_header = re.sub(r"[:\-]+$", "", cleaned).strip().lower()
+            if normalized_header in self._HEADER_MAP:
+                current_section = self._HEADER_MAP[normalized_header]
+                continue
+
+            section_buffers[current_section].append(cleaned)
+
+        parsed_sections = {
+            name: "\n".join(lines).strip()
+            for name, lines in section_buffers.items()
+            if lines
+        }
+
+        return {"sections": parsed_sections}
+
+
+class ExtractSignalsNode(BaseNode):
+    """Phase 2 node that extracts skills, projects, and keywords from sections."""
+
+    _STOPWORDS: set[str] = {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+        "using",
+        "years",
+        "year",
+        "experience",
+    }
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"signals": {"skills": [], "projects": [], "keywords": []}}
+
+        sections = state.get("sections")
+        if not isinstance(sections, dict) or not sections:
+            return {
+                "signals": {"skills": [], "projects": [], "keywords": []},
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="extract_signals",
+                        code="MISSING_SECTIONS",
+                        message="Cannot extract signals without parsed sections.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        skills = self._extract_skills(sections.get("skills", ""))
+        projects = self._extract_projects(sections.get("projects", ""))
+        keywords = self._extract_keywords(sections)
+
+        return {
+            "signals": {
+                "skills": skills,
+                "projects": projects,
+                "keywords": keywords,
+            }
+        }
+
+    def _extract_skills(self, text: str) -> list[str]:
+        if not isinstance(text, str) or not text.strip():
+            return []
+        normalized = text.replace("\n", ",")
+        candidates = [part.strip(" -\t") for part in normalized.split(",")]
+        return self._dedupe([token for token in candidates if token])
+
+    def _extract_projects(self, text: str) -> list[str]:
+        if not isinstance(text, str) or not text.strip():
+            return []
+        lines = [line.strip(" -*\t") for line in text.splitlines()]
+        candidates = [line for line in lines if line]
+        return self._dedupe(candidates)
+
+    def _extract_keywords(self, sections: dict[str, object]) -> list[str]:
+        corpus = " ".join(
+            str(value) for value in sections.values() if isinstance(value, str)
+        ).lower()
+        tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.-]{1,}", corpus)
+        filtered = [token for token in tokens if token not in self._STOPWORDS]
+
+        ranked = Counter(filtered)
+        # Deterministic ordering: highest frequency first, then lexical.
+        sorted_tokens = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
+        return [token for token, _count in sorted_tokens[:12]]
+
+    def _dedupe(self, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for value in values:
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(value)
+        return deduped
+
+
+class GenerateQuestionsNode(BaseNode):
+    """Phase 3 node that creates 15 structured interview questions."""
+
+    _CATEGORIES: tuple[str, ...] = ("tech", "project", "system", "deep-dive")
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"questions": []}
+
+        signals = state.get("signals")
+        if not isinstance(signals, dict):
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="generate_questions",
+                        code="MISSING_SIGNALS",
+                        message="Cannot generate questions without extracted signals.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        skills = self._as_list(signals.get("skills"))
+        projects = self._as_list(signals.get("projects"))
+        keywords = self._as_list(signals.get("keywords"))
+
+        prompts = self._build_prompt_seeds(skills, projects, keywords)
+        questions = [
+            self._make_question(index=idx + 1, seed=seed)
+            for idx, seed in enumerate(prompts[:15])
+        ]
+        return {"questions": questions}
+
+    def _as_list(self, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, str) and item.strip()]
+
+    def _build_prompt_seeds(
+        self, skills: list[str], projects: list[str], keywords: list[str]
+    ) -> list[tuple[str, str]]:
+        seeds: list[tuple[str, str]] = []
+
+        for skill in skills:
+            seeds.append(("tech", f"{skill}"))
+            seeds.append(("system", f"{skill}"))
+
+        for project in projects:
+            seeds.append(("project", f"{project}"))
+            seeds.append(("deep-dive", f"{project}"))
+
+        for keyword in keywords:
+            seeds.append(("deep-dive", f"{keyword}"))
+
+        if not seeds:
+            seeds = [
+                ("tech", "core backend skills"),
+                ("project", "recent project ownership"),
+                ("system", "service architecture"),
+                ("deep-dive", "engineering trade-offs"),
+            ]
+
+        while len(seeds) < 15:
+            seeds.extend(seeds)
+        return seeds
+
+    def _make_question(self, index: int, seed: tuple[str, str]) -> dict[str, object]:
+        category, topic = seed
+        prompt_map = {
+            "tech": f"How have you applied {topic} in production, and what limitations did you face?",
+            "project": f"Walk through the project '{topic}' and explain your personal contribution.",
+            "system": f"If you redesign a system centered on {topic}, what architecture would you choose and why?",
+            "deep-dive": f"Describe a hard technical decision involving {topic} and how you validated it.",
+        }
+        question_text = prompt_map.get(
+            category,
+            f"Explain your practical experience with {topic} and key outcomes.",
+        )
+
+        return {
+            "id": f"q{index:02d}",
+            "category": category if category in self._CATEGORIES else "tech",
+            "difficulty": 0,
+            "question": question_text,
+            "expected_points": [
+                "Problem context and constraints",
+                "Technical choices and trade-offs",
+                "Measured outcome and lessons learned",
+            ],
+            "followups": [
+                "What would you do differently now?",
+                "How did you measure success for this decision?",
+            ],
+        }
+
+
+class RateDifficultyNode(BaseNode):
+    """Phase 3 node that assigns 1-5 difficulty ratings to questions."""
+
+    _CATEGORY_BASE: dict[str, int] = {
+        "tech": 2,
+        "project": 3,
+        "system": 4,
+        "deep-dive": 4,
+    }
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            return {"questions": []}
+
+        questions = state.get("questions")
+        if not isinstance(questions, list) or not questions:
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="rate_difficulty",
+                        code="MISSING_QUESTIONS",
+                        message="Cannot rate difficulty without generated questions.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        rated_questions: list[dict[str, object]] = []
+        for index, question in enumerate(questions):
+            if not isinstance(question, dict):
+                continue
+
+            category = str(question.get("category", "tech"))
+            base = self._CATEGORY_BASE.get(category, 3)
+            variation = index % 3
+            difficulty = max(1, min(5, base - 1 + variation))
+
+            updated = dict(question)
+            updated["difficulty"] = difficulty
+            rated_questions.append(updated)
+
+        return {"questions": rated_questions}
+
+
+class FormatOutputNode(BaseNode):
+    """Final node that renders markdown from structured questions."""
+
+    def execute(self, state):
+        questions = state.get("questions")
+        errors = state.get("errors")
+
+        if not isinstance(errors, list):
+            errors = []
+
+        if not isinstance(questions, list):
+            return {
+                "questions": [],
+                "markdown": "",
+                "errors": errors
+                + [
+                    _error_item(
+                        node="format_output",
+                        code="INVALID_QUESTIONS",
+                        message="Questions payload is not a list.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        markdown = self._render_markdown(questions)
+        return {"questions": questions, "markdown": markdown}
+
+    def _render_markdown(self, questions: list[object]) -> str:
+        lines: list[str] = ["# Interview Questions", ""]
+
+        for item in questions:
+            if not isinstance(item, dict):
+                continue
+
+            question_id = str(item.get("id", ""))
+            category = str(item.get("category", "tech"))
+            difficulty = item.get("difficulty", "N/A")
+            question_text = str(item.get("question", ""))
+            expected_points = item.get("expected_points", [])
+            followups = item.get("followups", [])
+
+            lines.append(f"## {question_id} [{category}] (Difficulty: {difficulty})")
+            lines.append(question_text)
+
+            lines.append("")
+            lines.append("Expected points:")
+            if isinstance(expected_points, list) and expected_points:
+                for point in expected_points:
+                    lines.append(f"- {point}")
+            else:
+                lines.append("- N/A")
+
+            lines.append("")
+            lines.append("Follow-ups:")
+            if isinstance(followups, list) and followups:
+                for followup in followups:
+                    lines.append(f"- {followup}")
+            else:
+                lines.append("- N/A")
+
+            lines.append("")
+
+        return "\n".join(lines).rstrip()

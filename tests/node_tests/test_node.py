@@ -1,19 +1,153 @@
-"""Test the nodes for the Sam graph.
-
-Official document URL: https://docs.langchain.com/oss/python/langgraph/test"""
+"""Test nodes for the Resume Ingestor graph."""
 
 from __future__ import annotations
 
-from casts.sam.modules.nodes import SampleNode, AsyncSampleNode
+from casts.resume_ingestor.modules.nodes import (
+    ExtractSignalsNode,
+    ExtractTextNode,
+    FormatOutputNode,
+    GenerateQuestionsNode,
+    ParseSectionsNode,
+    RateDifficultyNode,
+)
 
 
-def test_base_node_calls_execute() -> None:
-    node = SampleNode(verbose=True)
-    result = node()
-    assert result == {"message": "Welcome to the Act!"}
+def test_extract_text_node_uses_inline_resume_text() -> None:
+    node = ExtractTextNode()
+    result = node({"resume_text": "Python backend engineer"})
+
+    assert result["raw_text"] == "Python backend engineer"
+    assert result["errors"] == []
 
 
-async def test_async_base_node_calls_execute() -> None:
-    node = AsyncSampleNode(verbose=True)
-    result = await node()
-    assert result == {"message": "Welcome to the Act!"}
+def test_parse_sections_node_splits_by_headers() -> None:
+    node = ParseSectionsNode()
+    result = node(
+        {
+            "raw_text": (
+                "Summary\n"
+                "Backend engineer with 6 years of experience\n"
+                "Skills\n"
+                "Python, FastAPI, AWS\n"
+                "Projects\n"
+                "Built interview automation service\n"
+            ),
+            "errors": [],
+        }
+    )
+
+    assert "sections" in result
+    assert (
+        result["sections"]["summary"] == "Backend engineer with 6 years of experience"
+    )
+    assert result["sections"]["skills"] == "Python, FastAPI, AWS"
+    assert result["sections"]["projects"] == "Built interview automation service"
+
+
+def test_parse_sections_node_returns_error_without_raw_text() -> None:
+    node = ParseSectionsNode()
+    result = node({"raw_text": "", "errors": []})
+
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["code"] == "MISSING_RAW_TEXT"
+
+
+def test_extract_signals_node_extracts_skills_projects_keywords() -> None:
+    node = ExtractSignalsNode()
+    result = node(
+        {
+            "sections": {
+                "summary": "Backend engineer focusing on payment platforms",
+                "skills": "Python, FastAPI, AWS, Docker",
+                "projects": (
+                    "Built fraud detection service using FastAPI\n"
+                    "Designed event-driven payment pipeline"
+                ),
+            },
+            "errors": [],
+        }
+    )
+
+    assert result["signals"]["skills"] == ["Python", "FastAPI", "AWS", "Docker"]
+    assert result["signals"]["projects"] == [
+        "Built fraud detection service using FastAPI",
+        "Designed event-driven payment pipeline",
+    ]
+    assert "fastapi" in result["signals"]["keywords"]
+    assert "payment" in result["signals"]["keywords"]
+
+
+def test_extract_signals_node_returns_error_without_sections() -> None:
+    node = ExtractSignalsNode()
+    result = node({"sections": {}, "errors": []})
+
+    assert result["signals"] == {"skills": [], "projects": [], "keywords": []}
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["code"] == "MISSING_SECTIONS"
+
+
+def test_generate_questions_node_creates_15_structured_items() -> None:
+    node = GenerateQuestionsNode()
+    result = node(
+        {
+            "signals": {
+                "skills": ["Python", "FastAPI", "AWS"],
+                "projects": ["Built interview graph service"],
+                "keywords": ["backend", "api", "scalability"],
+            },
+            "errors": [],
+        }
+    )
+
+    assert len(result["questions"]) == 15
+    first = result["questions"][0]
+    assert first["id"] == "q01"
+    assert first["category"] in {"tech", "project", "system", "deep-dive"}
+    assert first["difficulty"] == 0
+    assert isinstance(first["question"], str)
+    assert len(first["expected_points"]) >= 1
+    assert len(first["followups"]) >= 1
+
+
+def test_rate_difficulty_node_assigns_1_to_5_scale() -> None:
+    node = RateDifficultyNode()
+    generated_questions = [
+        {
+            "id": f"q{idx:02d}",
+            "category": "tech" if idx % 2 == 0 else "deep-dive",
+            "difficulty": 0,
+            "question": f"Question {idx}",
+            "expected_points": ["Point A"],
+            "followups": ["Follow-up A"],
+        }
+        for idx in range(1, 16)
+    ]
+    result = node({"questions": generated_questions, "errors": []})
+
+    assert len(result["questions"]) == 15
+    difficulties = [q["difficulty"] for q in result["questions"]]
+    assert all(isinstance(d, int) and 1 <= d <= 5 for d in difficulties)
+
+
+def test_format_output_node_renders_markdown() -> None:
+    node = FormatOutputNode()
+    result = node(
+        {
+            "questions": [
+                {
+                    "id": "q01",
+                    "category": "tech",
+                    "difficulty": 3,
+                    "question": "How did you design your API error model?",
+                    "expected_points": ["Consistency", "Client usability"],
+                    "followups": ["How did you version errors?"],
+                }
+            ],
+            "errors": [],
+        }
+    )
+
+    assert result["questions"][0]["id"] == "q01"
+    assert "# Interview Questions" in result["markdown"]
+    assert "Difficulty: 3" in result["markdown"]
+    assert "Expected points:" in result["markdown"]

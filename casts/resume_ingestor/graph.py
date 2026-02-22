@@ -10,7 +10,7 @@ Guidelines:
     2. Connect nodes via ``builder.add_edge()`` or ``builder.add_conditional_edges()`` when branching.
     3. Return the compiled graph to orchestrate LangGraph execution.
 
-Official document URL: 
+Official document URL:
     - Graph API: https://docs.langchain.com/oss/python/langgraph/graph-api
     - StateGraph: https://docs.langchain.com/oss/python/langgraph/graph-api#stategraph
     - Nodes: https://docs.langchain.com/oss/python/langgraph/graph-api#nodes
@@ -21,7 +21,14 @@ Official document URL:
 from langgraph.graph import END, START, StateGraph
 
 from casts.base_graph import BaseGraph
-from casts.resume_ingestor.modules.nodes import SampleNode
+from casts.resume_ingestor.modules.nodes import (
+    ExtractSignalsNode,
+    ExtractTextNode,
+    FormatOutputNode,
+    GenerateQuestionsNode,
+    ParseSectionsNode,
+    RateDifficultyNode,
+)
 from casts.resume_ingestor.modules.state import InputState, OutputState, State
 
 
@@ -50,10 +57,19 @@ class ResumeIngestorGraph(BaseGraph):
             self.state, input_schema=self.input, output_schema=self.output
         )
 
-        # Register node as an INSTANCE so it returns a dict update, not the class object
-        builder.add_node("SampleNode", SampleNode())
-        builder.add_edge(START, "SampleNode")
-        builder.add_edge("SampleNode", END)
+        builder.add_node("extract_text", ExtractTextNode())
+        builder.add_node("parse_sections", ParseSectionsNode())
+        builder.add_node("extract_signals", ExtractSignalsNode())
+        builder.add_node("generate_questions", GenerateQuestionsNode())
+        builder.add_node("rate_difficulty", RateDifficultyNode())
+        builder.add_node("format_output", FormatOutputNode())
+        builder.add_edge(START, "extract_text")
+        builder.add_edge("extract_text", "parse_sections")
+        builder.add_edge("parse_sections", "extract_signals")
+        builder.add_edge("extract_signals", "generate_questions")
+        builder.add_edge("generate_questions", "rate_difficulty")
+        builder.add_edge("rate_difficulty", "format_output")
+        builder.add_edge("format_output", END)
 
         graph = builder.compile()
         graph.name = self.name
