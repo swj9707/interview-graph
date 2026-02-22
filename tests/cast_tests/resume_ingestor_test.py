@@ -8,12 +8,22 @@ from __future__ import annotations
 from casts.resume_ingestor.graph import resume_ingestor_graph
 
 
-def test_graph_produces_message() -> None:
+def test_graph_extracts_text_from_resume_text() -> None:
     graph = resume_ingestor_graph()
+    result = graph.invoke(
+        {"resume_text": "Senior Backend Engineer with Python and AWS"}
+    )
 
-    # 최소 상태로 그래프 실행
-    result = graph.invoke({"query": "I'm joining Act"})
+    assert result["questions"] == []
+    assert result["markdown"] == ""
+    assert result["errors"] == []
 
-    # SampleNode가 message 키를 생성하는지 확인
-    assert "messages" in result
-    assert result["messages"] == "Welcome to the Act!"
+
+def test_graph_returns_error_when_input_missing() -> None:
+    graph = resume_ingestor_graph()
+    result = graph.invoke({})
+
+    assert result["questions"] == []
+    assert result["markdown"] == ""
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["code"] == "MISSING_INPUT"
