@@ -27,3 +27,23 @@ def test_graph_returns_error_when_input_missing() -> None:
     assert result["markdown"] == ""
     assert len(result["errors"]) == 1
     assert result["errors"][0]["code"] == "MISSING_INPUT"
+
+
+def test_graph_pipeline_completes_with_sectioned_resume_text() -> None:
+    graph = resume_ingestor_graph()
+    result = graph.invoke(
+        {
+            "resume_text": (
+                "Summary\n"
+                "Backend engineer\n"
+                "Skills\n"
+                "Python, FastAPI, AWS\n"
+                "Projects\n"
+                "Built interview tooling\n"
+            )
+        }
+    )
+
+    assert result["questions"] == []
+    assert result["markdown"] == ""
+    assert result["errors"] == []
