@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from casts.base_node import BaseNode
@@ -120,3 +121,76 @@ class ExtractTextNode(BaseNode):
                 )
             ],
         }
+
+
+class ParseSectionsNode(BaseNode):
+    """Phase 2 node that maps raw resume text to logical sections."""
+
+    _HEADER_MAP: dict[str, str] = {
+        "summary": "summary",
+        "profile": "summary",
+        "about": "summary",
+        "skills": "skills",
+        "technical skills": "skills",
+        "experience": "experience",
+        "work experience": "experience",
+        "professional experience": "experience",
+        "projects": "projects",
+        "project": "projects",
+        "education": "education",
+        "academic background": "education",
+    }
+
+    _EXPECTED_SECTIONS: tuple[str, ...] = (
+        "summary",
+        "skills",
+        "experience",
+        "projects",
+        "education",
+    )
+
+    def execute(self, state):
+        raw_text = state.get("raw_text")
+        existing_errors = list(state.get("errors", []))
+
+        if existing_errors:
+            return {"sections": {}}
+
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            return {
+                "sections": {},
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="parse_sections",
+                        code="MISSING_RAW_TEXT",
+                        message="Cannot parse sections without raw_text.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        section_buffers: dict[str, list[str]] = {
+            key: [] for key in self._EXPECTED_SECTIONS
+        }
+        current_section = "summary"
+
+        for line in raw_text.splitlines():
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+
+            normalized_header = re.sub(r"[:\-]+$", "", cleaned).strip().lower()
+            if normalized_header in self._HEADER_MAP:
+                current_section = self._HEADER_MAP[normalized_header]
+                continue
+
+            section_buffers[current_section].append(cleaned)
+
+        parsed_sections = {
+            name: "\n".join(lines).strip()
+            for name, lines in section_buffers.items()
+            if lines
+        }
+
+        return {"sections": parsed_sections}
