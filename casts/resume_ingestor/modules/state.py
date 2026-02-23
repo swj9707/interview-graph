@@ -61,6 +61,7 @@ class OutputState(TypedDict):
     markdown: str
     errors: list[ErrorItem]
     generation_mode: str
+    generation_reason: str
 
 
 class State(MessagesState):
@@ -75,3 +76,4 @@ class State(MessagesState):
     markdown: str
     errors: list[ErrorItem]
     generation_mode: str
+    generation_reason: str

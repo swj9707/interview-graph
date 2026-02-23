@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from casts.base_node import BaseNode
-from casts.resume_ingestor.modules.models import get_generation_model
+from casts.resume_ingestor.modules.models import get_generation_model_with_reason
 from casts.resume_ingestor.modules.prompts import build_question_generation_messages
 
 
@@ -50,6 +50,7 @@ class ExtractTextNode(BaseNode):
                 "markdown": "",
                 "errors": [],
                 "generation_mode": "fallback",
+                "generation_reason": "not_generated_yet",
             }
 
         if isinstance(resume_path, str) and resume_path.strip():
@@ -75,6 +76,7 @@ class ExtractTextNode(BaseNode):
                         )
                     ],
                     "generation_mode": "fallback",
+                    "generation_reason": "extract_text_file_not_found",
                 }
 
             try:
@@ -100,6 +102,7 @@ class ExtractTextNode(BaseNode):
                         )
                     ],
                     "generation_mode": "fallback",
+                    "generation_reason": "extract_text_read_failed",
                 }
 
             if not loaded_text:
@@ -123,6 +126,7 @@ class ExtractTextNode(BaseNode):
                         )
                     ],
                     "generation_mode": "fallback",
+                    "generation_reason": "extract_text_empty_text",
                 }
 
             return {
@@ -138,6 +142,7 @@ class ExtractTextNode(BaseNode):
                 "markdown": "",
                 "errors": [],
                 "generation_mode": "fallback",
+                "generation_reason": "not_generated_yet",
             }
 
         return {
@@ -160,6 +165,7 @@ class ExtractTextNode(BaseNode):
                 )
             ],
             "generation_mode": "fallback",
+            "generation_reason": "extract_text_missing_input",
         }
 
 
@@ -375,7 +381,11 @@ class GenerateQuestionsNode(BaseNode):
     def execute(self, state):
         existing_errors = list(state.get("errors", []))
         if existing_errors:
-            return {"questions": [], "generation_mode": "fallback"}
+            return {
+                "questions": [],
+                "generation_mode": "fallback",
+                "generation_reason": "upstream_errors",
+            }
 
         sections = state.get("sections")
         signals = state.get("signals")
@@ -398,7 +408,7 @@ class GenerateQuestionsNode(BaseNode):
         keywords = self._as_list(signals.get("keywords"))
         evidence = self._as_list(signals.get("evidence"))
 
-        llm_questions = self._generate_questions_with_llm(
+        llm_questions, llm_reason = self._generate_questions_with_llm(
             raw_text=str(state.get("raw_text", "")),
             sections=sections,
             signals={
@@ -409,14 +419,22 @@ class GenerateQuestionsNode(BaseNode):
             },
         )
         if llm_questions is not None:
-            return {"questions": llm_questions, "generation_mode": "llm"}
+            return {
+                "questions": llm_questions,
+                "generation_mode": "llm",
+                "generation_reason": llm_reason,
+            }
 
         prompts = self._build_prompt_seeds(skills, projects, keywords, evidence)
         questions = [
             self._make_question(index=idx + 1, seed=seed)
             for idx, seed in enumerate(prompts[:15])
         ]
-        return {"questions": questions, "generation_mode": "fallback"}
+        return {
+            "questions": questions,
+            "generation_mode": "fallback",
+            "generation_reason": llm_reason,
+        }
 
     def _generate_questions_with_llm(
         self,
@@ -424,10 +442,10 @@ class GenerateQuestionsNode(BaseNode):
         raw_text: str,
         sections: dict[str, object],
         signals: dict[str, object],
-    ) -> list[dict[str, object]] | None:
-        model = get_generation_model()
+    ) -> tuple[list[dict[str, object]] | None, str]:
+        model, model_reason = get_generation_model_with_reason()
         if model is None:
-            return None
+            return None, model_reason
 
         try:
             messages = build_question_generation_messages(
@@ -436,9 +454,12 @@ class GenerateQuestionsNode(BaseNode):
                 signals=signals,
             )
             response = model.invoke(messages)
-            return self._parse_llm_questions(response)
-        except Exception:
-            return None
+            parsed = self._parse_llm_questions(response)
+            if parsed is None:
+                return None, "llm_parse_failed"
+            return parsed, "llm_success"
+        except Exception as exc:
+            return None, f"llm_invoke_error:{type(exc).__name__}"
 
     def _parse_llm_questions(self, response: object) -> list[dict[str, object]] | None:
         content = getattr(response, "content", response)
@@ -909,6 +930,7 @@ class FormatOutputNode(BaseNode):
         questions = state.get("questions")
         errors = state.get("errors")
         generation_mode = state.get("generation_mode", "fallback")
+        generation_reason = state.get("generation_reason", "unknown")
 
         if not isinstance(errors, list):
             errors = []
@@ -918,6 +940,7 @@ class FormatOutputNode(BaseNode):
                 "questions": [],
                 "markdown": "",
                 "generation_mode": "fallback",
+                "generation_reason": "format_output_invalid_questions",
                 "errors": errors
                 + [
                     _error_item(
@@ -934,6 +957,7 @@ class FormatOutputNode(BaseNode):
             "questions": questions,
             "markdown": markdown,
             "generation_mode": str(generation_mode),
+            "generation_reason": str(generation_reason),
         }
 
     def _render_markdown(self, questions: list[object]) -> str:

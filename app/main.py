@@ -39,6 +39,7 @@ class GenerateResponse(BaseModel):
     markdown: str
     errors: list[dict[str, object]]
     generation_mode: str = "fallback"
+    generation_reason: str = "unknown"
 
 
 @app.get("/health")
@@ -62,6 +63,7 @@ def generate_interview_questions(payload: GenerateRequest) -> GenerateResponse:
         markdown=result.get("markdown", ""),
         errors=result.get("errors", []),
         generation_mode=str(result.get("generation_mode", "fallback")),
+        generation_reason=str(result.get("generation_reason", "unknown")),
     )
 
 
@@ -96,4 +98,5 @@ async def generate_from_pdf(file: Annotated[UploadFile, File(...)]) -> GenerateR
         markdown=result.get("markdown", ""),
         errors=result.get("errors", []),
         generation_mode=str(result.get("generation_mode", "fallback")),
+        generation_reason=str(result.get("generation_reason", "unknown")),
     )
