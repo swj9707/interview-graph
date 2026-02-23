@@ -3,11 +3,24 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 from casts.resume_ingestor.graph import resume_ingestor_graph
 from casts.resume_ingestor.modules.models import get_generation_model
+
+
+def _load_runtime_env() -> None:
+    try:
+        from dotenv import load_dotenv
+    except Exception:
+        return
+
+    root = Path(__file__).resolve().parents[1]
+    load_dotenv(root / ".env", override=False)
+    load_dotenv(root / ".env.local", override=False)
+
+
+_load_runtime_env()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -35,6 +48,8 @@ def _has_provider_key() -> bool:
         return bool(os.getenv("OPENAI_API_KEY", "").strip())
     if provider == "anthropic":
         return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+    if provider == "ollama":
+        return True
     return False
 
 
@@ -42,6 +57,7 @@ def _quality_report(result: dict[str, object]) -> dict[str, object]:
     questions = result.get("questions", [])
     errors = result.get("errors", [])
     generation_mode = str(result.get("generation_mode", "fallback"))
+    generation_reason = str(result.get("generation_reason", "unknown"))
 
     if not isinstance(questions, list):
         questions = []
@@ -67,6 +83,7 @@ def _quality_report(result: dict[str, object]) -> dict[str, object]:
     unique_categories = sorted(set(categories))
     return {
         "generation_mode": generation_mode,
+        "generation_reason": generation_reason,
         "question_count": len(questions),
         "unique_categories": unique_categories,
         "category_count": len(unique_categories),
@@ -115,6 +132,7 @@ def main() -> int:
     category_count = _as_int(report.get("category_count"), 0)
 
     generation_mode = str(report.get("generation_mode", "fallback"))
+    generation_reason = str(report.get("generation_reason", "unknown"))
 
     if question_count != 15:
         return 1
@@ -124,6 +142,7 @@ def main() -> int:
         return 1
 
     if llm_ready and generation_mode != "llm":
+        print(f"LLM ready but fallback occurred: reason={generation_reason}")
         return 1
     return 0
 

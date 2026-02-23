@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.116.1",
     "langchain-anthropic>=0.3.0",
     "langchain>=1.0.0",
+    "langchain-ollama>=0.3.0",
     "langchain-openai>=0.3.0",
     "langgraph>=1.0.0",
     "pypdf>=6.0.0",
