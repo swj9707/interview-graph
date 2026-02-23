@@ -1,5 +1,11 @@
 # 🙋‍♂️ InterviewGraph
 
+<div align="center">
+  <picture>
+    <img src=".github/images/logo/interview-graph-logo.png" alt="InterviewGraph logo" width="500">
+  </picture>
+</div>
+
 InterviewGraph is a LangGraph-based service that generates structured interview questions from resume content.
 
 It accepts either resume text or a PDF file, extracts relevant signals, and returns 15 questions with difficulty ratings.
