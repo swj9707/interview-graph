@@ -94,8 +94,8 @@ def test_extract_signals_node_returns_error_without_sections() -> None:
 
 def test_generate_questions_node_creates_15_structured_items(monkeypatch) -> None:
     monkeypatch.setattr(
-        "casts.resume_ingestor.modules.nodes.get_generation_model",
-        lambda: None,
+        "casts.resume_ingestor.modules.nodes.get_generation_model_with_reason",
+        lambda: (None, "missing_credentials"),
     )
     node = GenerateQuestionsNode()
     result = node(
@@ -141,8 +141,8 @@ def test_generate_questions_node_uses_llm_when_available(monkeypatch) -> None:
             return FakeResponse()
 
     monkeypatch.setattr(
-        "casts.resume_ingestor.modules.nodes.get_generation_model",
-        lambda: FakeModel(),
+        "casts.resume_ingestor.modules.nodes.get_generation_model_with_reason",
+        lambda: (FakeModel(), "ready"),
     )
 
     result = node(
