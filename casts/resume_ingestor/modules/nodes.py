@@ -441,6 +441,253 @@ class RateDifficultyNode(BaseNode):
         return {"questions": rated_questions}
 
 
+class ValidateQuestionsNode(BaseNode):
+    """Quality gate for generated questions before formatting output."""
+
+    _CATEGORY_BASE: dict[str, int] = {
+        "tech": 2,
+        "project": 3,
+        "system": 4,
+        "deep-dive": 4,
+    }
+
+    def execute(self, state):
+        existing_errors = list(state.get("errors", []))
+        if existing_errors:
+            questions = state.get("questions")
+            return {"questions": questions if isinstance(questions, list) else []}
+
+        questions = state.get("questions")
+        if not isinstance(questions, list):
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="validate_questions",
+                        code="INVALID_QUESTIONS",
+                        message="Questions payload is not a list.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        typed_questions = [item for item in questions if isinstance(item, dict)]
+        if not typed_questions:
+            return {
+                "questions": [],
+                "errors": existing_errors
+                + [
+                    _error_item(
+                        node="validate_questions",
+                        code="EMPTY_QUESTIONS",
+                        message="No questions available for quality validation.",
+                        retryable=False,
+                    )
+                ],
+            }
+
+        evidence_terms = self._extract_evidence_terms(state.get("signals"))
+
+        deduped_questions: list[dict[str, object]] = []
+        seen_questions: set[str] = set()
+        duplicate_count = 0
+        for question in typed_questions:
+            normalized = self._normalize_text(str(question.get("question", "")))
+            if not normalized:
+                duplicate_count += 1
+                continue
+            if normalized in seen_questions:
+                duplicate_count += 1
+                continue
+            seen_questions.add(normalized)
+            deduped_questions.append(dict(question))
+
+        generic_count = 0
+        for idx, question in enumerate(deduped_questions):
+            if self._is_generic_question(
+                str(question.get("question", "")), evidence_terms
+            ):
+                generic_count += 1
+                topic = (
+                    evidence_terms[idx % len(evidence_terms)]
+                    if evidence_terms
+                    else "your recent resume experience"
+                )
+                category = str(question.get("category", "tech"))
+                question["question"] = self._build_contextual_question(category, topic)
+
+        fill_count = max(0, 15 - len(deduped_questions))
+        if fill_count:
+            deduped_questions.extend(
+                self._build_fallback_questions(fill_count, evidence_terms)
+            )
+
+        validated_questions = deduped_questions[:15]
+        validated_questions = [
+            self._normalize_question(index + 1, question)
+            for index, question in enumerate(validated_questions)
+        ]
+
+        distribution_issue = self._distribution_issue(validated_questions)
+
+        notes: list[str] = []
+        if duplicate_count:
+            notes.append(f"removed {duplicate_count} duplicate/empty questions")
+        if generic_count:
+            notes.append(f"rewrote {generic_count} generic questions")
+        if fill_count:
+            notes.append(f"added {fill_count} fallback questions")
+        if distribution_issue:
+            notes.append(distribution_issue)
+
+        return {"questions": validated_questions}
+
+    def _normalize_text(self, text: str) -> str:
+        normalized = re.sub(r"\s+", " ", text.strip().lower())
+        return re.sub(r"[^a-z0-9 ]+", "", normalized)
+
+    def _extract_evidence_terms(self, signals: object) -> list[str]:
+        if not isinstance(signals, dict):
+            return []
+
+        merged: list[str] = []
+        for key in ("skills", "projects", "keywords"):
+            value = signals.get(key)
+            if isinstance(value, list):
+                merged.extend(
+                    item.strip()
+                    for item in value
+                    if isinstance(item, str) and item.strip()
+                )
+
+        seen: set[str] = set()
+        evidence: list[str] = []
+        for item in merged:
+            lowered = item.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            evidence.append(item)
+        return evidence
+
+    def _is_generic_question(self, question: str, evidence_terms: list[str]) -> bool:
+        normalized_question = question.lower()
+        if len(normalized_question.strip()) < 25:
+            return True
+        if not evidence_terms:
+            return False
+
+        return not any(term.lower() in normalized_question for term in evidence_terms)
+
+    def _build_contextual_question(self, category: str, topic: str) -> str:
+        prompts = {
+            "tech": f"When applying {topic}, what production constraints shaped your implementation choices?",
+            "project": f"In your project work on {topic}, what outcome did you own directly and how did you deliver it?",
+            "system": f"If scaling a system around {topic}, what architecture trade-offs would you prioritize and why?",
+            "deep-dive": f"Describe the hardest technical trade-off you made involving {topic}, including validation steps and impact.",
+        }
+        return prompts.get(
+            category,
+            f"Describe a concrete engineering decision you made involving {topic} and the resulting impact.",
+        )
+
+    def _build_fallback_questions(
+        self, count: int, evidence_terms: list[str]
+    ) -> list[dict[str, object]]:
+        categories = ("tech", "project", "system", "deep-dive")
+        fallback: list[dict[str, object]] = []
+
+        for idx in range(count):
+            category = categories[idx % len(categories)]
+            topic = (
+                evidence_terms[idx % len(evidence_terms)]
+                if evidence_terms
+                else "your recent engineering work"
+            )
+            fallback.append(
+                {
+                    "id": "",
+                    "category": category,
+                    "difficulty": self._CATEGORY_BASE[category],
+                    "question": self._build_contextual_question(category, topic),
+                    "expected_points": [
+                        "Specific context from the resume",
+                        "Decision rationale and trade-offs",
+                        "Measured outcomes and lessons learned",
+                    ],
+                    "followups": [
+                        "What risks did you consider?",
+                        "How would you improve this approach now?",
+                    ],
+                }
+            )
+
+        return fallback
+
+    def _normalize_question(
+        self, index: int, question: dict[str, object]
+    ) -> dict[str, object]:
+        normalized = dict(question)
+        category = str(normalized.get("category", "tech"))
+        if category not in self._CATEGORY_BASE:
+            category = "tech"
+        normalized["category"] = category
+
+        difficulty = normalized.get("difficulty", self._CATEGORY_BASE[category])
+        if not isinstance(difficulty, int) or not 1 <= difficulty <= 5:
+            difficulty = self._CATEGORY_BASE[category]
+        normalized["difficulty"] = difficulty
+
+        normalized["id"] = f"q{index:02d}"
+
+        expected_points = normalized.get("expected_points")
+        if not isinstance(expected_points, list) or not expected_points:
+            normalized["expected_points"] = [
+                "Specific context from the resume",
+                "Technical rationale and trade-offs",
+                "Outcome and retrospective insight",
+            ]
+
+        followups = normalized.get("followups")
+        if not isinstance(followups, list) or not followups:
+            normalized["followups"] = [
+                "What constraints most influenced your decision?",
+                "What would you change if rebuilding this today?",
+            ]
+
+        if (
+            not isinstance(normalized.get("question"), str)
+            or not str(normalized.get("question", "")).strip()
+        ):
+            normalized["question"] = self._build_contextual_question(
+                category, "your recent engineering work"
+            )
+
+        return normalized
+
+    def _distribution_issue(self, questions: list[dict[str, object]]) -> str | None:
+        categories = [str(item.get("category", "tech")) for item in questions]
+        unique_categories = set(categories)
+        if len(unique_categories) < 3:
+            return "category distribution is narrow"
+
+        difficult_values = [
+            self._safe_difficulty_value(item.get("difficulty")) for item in questions
+        ]
+        if max(difficult_values) - min(difficult_values) < 2:
+            return "difficulty spread is too small"
+
+        return None
+
+    def _safe_difficulty_value(self, value: object) -> int:
+        if isinstance(value, int):
+            return max(1, min(5, value))
+        if isinstance(value, str) and value.isdigit():
+            return max(1, min(5, int(value)))
+        return 1
+
+
 class FormatOutputNode(BaseNode):
     """Final node that renders markdown from structured questions."""
 
