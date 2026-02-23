@@ -9,6 +9,7 @@ from casts.resume_ingestor.modules.nodes import (
     GenerateQuestionsNode,
     ParseSectionsNode,
     RateDifficultyNode,
+    ValidateQuestionsNode,
 )
 
 
@@ -151,3 +152,59 @@ def test_format_output_node_renders_markdown() -> None:
     assert "# Interview Questions" in result["markdown"]
     assert "Difficulty: 3" in result["markdown"]
     assert "Expected points:" in result["markdown"]
+
+
+def test_validate_questions_node_removes_duplicates_and_normalizes_ids() -> None:
+    node = ValidateQuestionsNode()
+    duplicate_question = {
+        "id": "qx",
+        "category": "tech",
+        "difficulty": 3,
+        "question": "How did you use FastAPI in production?",
+        "expected_points": ["Context"],
+        "followups": ["What was hard?"],
+    }
+
+    result = node(
+        {
+            "signals": {
+                "skills": ["FastAPI", "Python"],
+                "projects": ["Built hiring pipeline service"],
+                "keywords": ["backend"],
+            },
+            "questions": [duplicate_question, duplicate_question],
+            "errors": [],
+        }
+    )
+
+    assert len(result["questions"]) == 15
+    assert result["questions"][0]["id"] == "q01"
+    assert result["questions"][1]["id"] == "q02"
+
+
+def test_validate_questions_node_rewrites_generic_question_using_evidence() -> None:
+    node = ValidateQuestionsNode()
+    result = node(
+        {
+            "signals": {
+                "skills": ["Kubernetes"],
+                "projects": ["Realtime fraud detection"],
+                "keywords": ["scalability"],
+            },
+            "questions": [
+                {
+                    "id": "q01",
+                    "category": "system",
+                    "difficulty": 4,
+                    "question": "Tell me about your experience.",
+                    "expected_points": ["Something"],
+                    "followups": ["More details?"],
+                }
+            ],
+            "errors": [],
+        }
+    )
+
+    assert len(result["questions"]) == 15
+    rewritten = result["questions"][0]["question"].lower()
+    assert "kubernetes" in rewritten or "realtime fraud detection" in rewritten
