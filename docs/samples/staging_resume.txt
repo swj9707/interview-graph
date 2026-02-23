@@ -1,0 +1,17 @@
+Summary
+Senior backend engineer with 8 years building distributed API platforms for B2B SaaS.
+
+Skills
+Python, FastAPI, PostgreSQL, Redis, Kafka, AWS, Terraform, Kubernetes
+
+Experience
+- Led migration from monolith to event-driven services and reduced API p95 latency by 42%.
+- Built a rate-limiting and abuse detection layer that reduced fraudulent requests by 67%.
+- Owned incident response for payment pipeline outages and introduced SLO-based alerting.
+
+Projects
+- Designed an interview automation service that generated role-specific question sets for hiring teams.
+- Built an async document ingestion pipeline that processed 1.2M records per day.
+
+Education
+BS in Computer Science

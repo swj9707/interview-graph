@@ -82,7 +82,12 @@ def test_extract_signals_node_returns_error_without_sections() -> None:
     node = ExtractSignalsNode()
     result = node({"sections": {}, "errors": []})
 
-    assert result["signals"] == {"skills": [], "projects": [], "keywords": []}
+    assert result["signals"] == {
+        "skills": [],
+        "projects": [],
+        "keywords": [],
+        "evidence": [],
+    }
     assert len(result["errors"]) == 1
     assert result["errors"][0]["code"] == "MISSING_SECTIONS"
 
@@ -91,10 +96,16 @@ def test_generate_questions_node_creates_15_structured_items() -> None:
     node = GenerateQuestionsNode()
     result = node(
         {
+            "raw_text": "Backend engineer with production API and cloud infra experience",
+            "sections": {
+                "summary": "Backend engineer",
+                "projects": "Built interview graph service",
+            },
             "signals": {
                 "skills": ["Python", "FastAPI", "AWS"],
                 "projects": ["Built interview graph service"],
                 "keywords": ["backend", "api", "scalability"],
+                "evidence": ["Built interview graph service used by recruiting teams"],
             },
             "errors": [],
         }
@@ -108,6 +119,48 @@ def test_generate_questions_node_creates_15_structured_items() -> None:
     assert isinstance(first["question"], str)
     assert len(first["expected_points"]) >= 1
     assert len(first["followups"]) >= 1
+
+
+def test_generate_questions_node_uses_llm_when_available(monkeypatch) -> None:
+    node = GenerateQuestionsNode()
+
+    class FakeResponse:
+        content = (
+            '{"questions":[{"id":"qx","category":"tech","difficulty":4,'
+            '"question":"How did you scale FastAPI for burst traffic?",'
+            '"expected_points":["Autoscaling","Bottleneck analysis","SLO impact"],'
+            '"followups":["What failed first?","How did you validate?", "extra"]}]}'
+        )
+
+    class FakeModel:
+        def invoke(self, _messages):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "casts.resume_ingestor.modules.nodes.get_generation_model",
+        lambda: FakeModel(),
+    )
+
+    result = node(
+        {
+            "raw_text": "Senior backend engineer",
+            "sections": {"summary": "Senior backend engineer"},
+            "signals": {
+                "skills": ["FastAPI"],
+                "projects": ["Built interview graph service"],
+                "keywords": ["scalability"],
+                "evidence": ["Scaled API for recruiting platform"],
+            },
+            "errors": [],
+        }
+    )
+
+    assert len(result["questions"]) == 1
+    assert result["questions"][0]["id"] == "q01"
+    assert result["questions"][0]["category"] == "tech"
+    assert result["questions"][0]["difficulty"] == 4
+    assert len(result["questions"][0]["expected_points"]) == 3
+    assert len(result["questions"][0]["followups"]) == 2
 
 
 def test_rate_difficulty_node_assigns_1_to_5_scale() -> None:
