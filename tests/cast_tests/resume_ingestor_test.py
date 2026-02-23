@@ -18,6 +18,7 @@ def test_graph_extracts_text_from_resume_text() -> None:
     assert all(1 <= q["difficulty"] <= 5 for q in result["questions"])
     assert "# Interview Questions" in result["markdown"]
     assert result["errors"] == []
+    assert result["generation_mode"] in {"llm", "fallback"}
 
 
 def test_graph_returns_error_when_input_missing() -> None:
@@ -28,6 +29,7 @@ def test_graph_returns_error_when_input_missing() -> None:
     assert result["markdown"] == "# Interview Questions"
     assert len(result["errors"]) == 1
     assert result["errors"][0]["code"] == "MISSING_INPUT"
+    assert result["generation_mode"] == "fallback"
 
 
 def test_graph_pipeline_completes_with_sectioned_resume_text() -> None:

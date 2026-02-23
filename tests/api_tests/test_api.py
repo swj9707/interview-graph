@@ -33,6 +33,7 @@ def test_generate_interview_questions_from_text() -> None:
     assert len(payload["questions"]) == 15
     assert "# Interview Questions" in payload["markdown"]
     assert payload["errors"] == []
+    assert payload["generation_mode"] in {"llm", "fallback"}
 
 
 def test_generate_interview_questions_requires_input() -> None:

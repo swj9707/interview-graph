@@ -92,7 +92,11 @@ def test_extract_signals_node_returns_error_without_sections() -> None:
     assert result["errors"][0]["code"] == "MISSING_SECTIONS"
 
 
-def test_generate_questions_node_creates_15_structured_items() -> None:
+def test_generate_questions_node_creates_15_structured_items(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "casts.resume_ingestor.modules.nodes.get_generation_model",
+        lambda: None,
+    )
     node = GenerateQuestionsNode()
     result = node(
         {
