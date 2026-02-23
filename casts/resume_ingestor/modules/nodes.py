@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from pathlib import Path
 
 from casts.base_node import BaseNode
+from casts.resume_ingestor.modules.models import get_generation_model
+from casts.resume_ingestor.modules.prompts import build_question_generation_messages
 
 
 def _error_item(
@@ -37,7 +40,12 @@ class ExtractTextNode(BaseNode):
             return {
                 "raw_text": resume_text.strip(),
                 "sections": {},
-                "signals": {"skills": [], "projects": [], "keywords": []},
+                "signals": {
+                    "skills": [],
+                    "projects": [],
+                    "keywords": [],
+                    "evidence": [],
+                },
                 "questions": [],
                 "markdown": "",
                 "errors": [],
@@ -49,7 +57,12 @@ class ExtractTextNode(BaseNode):
                 return {
                     "raw_text": "",
                     "sections": {},
-                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "signals": {
+                        "skills": [],
+                        "projects": [],
+                        "keywords": [],
+                        "evidence": [],
+                    },
                     "questions": [],
                     "markdown": "",
                     "errors": [
@@ -68,7 +81,12 @@ class ExtractTextNode(BaseNode):
                 return {
                     "raw_text": "",
                     "sections": {},
-                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "signals": {
+                        "skills": [],
+                        "projects": [],
+                        "keywords": [],
+                        "evidence": [],
+                    },
                     "questions": [],
                     "markdown": "",
                     "errors": [
@@ -85,7 +103,12 @@ class ExtractTextNode(BaseNode):
                 return {
                     "raw_text": "",
                     "sections": {},
-                    "signals": {"skills": [], "projects": [], "keywords": []},
+                    "signals": {
+                        "skills": [],
+                        "projects": [],
+                        "keywords": [],
+                        "evidence": [],
+                    },
                     "questions": [],
                     "markdown": "",
                     "errors": [
@@ -101,7 +124,12 @@ class ExtractTextNode(BaseNode):
             return {
                 "raw_text": loaded_text,
                 "sections": {},
-                "signals": {"skills": [], "projects": [], "keywords": []},
+                "signals": {
+                    "skills": [],
+                    "projects": [],
+                    "keywords": [],
+                    "evidence": [],
+                },
                 "questions": [],
                 "markdown": "",
                 "errors": [],
@@ -110,7 +138,12 @@ class ExtractTextNode(BaseNode):
         return {
             "raw_text": "",
             "sections": {},
-            "signals": {"skills": [], "projects": [], "keywords": []},
+            "signals": {
+                "skills": [],
+                "projects": [],
+                "keywords": [],
+                "evidence": [],
+            },
             "questions": [],
             "markdown": "",
             "errors": [
@@ -228,12 +261,24 @@ class ExtractSignalsNode(BaseNode):
     def execute(self, state):
         existing_errors = list(state.get("errors", []))
         if existing_errors:
-            return {"signals": {"skills": [], "projects": [], "keywords": []}}
+            return {
+                "signals": {
+                    "skills": [],
+                    "projects": [],
+                    "keywords": [],
+                    "evidence": [],
+                }
+            }
 
         sections = state.get("sections")
         if not isinstance(sections, dict) or not sections:
             return {
-                "signals": {"skills": [], "projects": [], "keywords": []},
+                "signals": {
+                    "skills": [],
+                    "projects": [],
+                    "keywords": [],
+                    "evidence": [],
+                },
                 "errors": existing_errors
                 + [
                     _error_item(
@@ -248,12 +293,14 @@ class ExtractSignalsNode(BaseNode):
         skills = self._extract_skills(sections.get("skills", ""))
         projects = self._extract_projects(sections.get("projects", ""))
         keywords = self._extract_keywords(sections)
+        evidence = self._extract_evidence(sections)
 
         return {
             "signals": {
                 "skills": skills,
                 "projects": projects,
                 "keywords": keywords,
+                "evidence": evidence,
             }
         }
 
@@ -283,6 +330,25 @@ class ExtractSignalsNode(BaseNode):
         sorted_tokens = sorted(ranked.items(), key=lambda item: (-item[1], item[0]))
         return [token for token, _count in sorted_tokens[:12]]
 
+    def _extract_evidence(self, sections: dict[str, object]) -> list[str]:
+        evidence: list[str] = []
+        for key in ("experience", "projects", "summary"):
+            text = sections.get(key)
+            if not isinstance(text, str) or not text.strip():
+                continue
+
+            for line in text.splitlines():
+                cleaned = line.strip(" -*\t")
+                if len(cleaned) < 16:
+                    continue
+                if re.search(
+                    r"\b(led|built|designed|improved|scaled|reduced|increased|owned|migrated)\b",
+                    cleaned.lower(),
+                ):
+                    evidence.append(cleaned)
+
+        return self._dedupe(evidence)[:12]
+
     def _dedupe(self, values: list[str]) -> list[str]:
         seen: set[str] = set()
         deduped: list[str] = []
@@ -305,8 +371,9 @@ class GenerateQuestionsNode(BaseNode):
         if existing_errors:
             return {"questions": []}
 
+        sections = state.get("sections")
         signals = state.get("signals")
-        if not isinstance(signals, dict):
+        if not isinstance(signals, dict) or not isinstance(sections, dict):
             return {
                 "questions": [],
                 "errors": existing_errors
@@ -314,7 +381,7 @@ class GenerateQuestionsNode(BaseNode):
                     _error_item(
                         node="generate_questions",
                         code="MISSING_SIGNALS",
-                        message="Cannot generate questions without extracted signals.",
+                        message="Cannot generate questions without extracted signals and sections.",
                         retryable=False,
                     )
                 ],
@@ -323,13 +390,146 @@ class GenerateQuestionsNode(BaseNode):
         skills = self._as_list(signals.get("skills"))
         projects = self._as_list(signals.get("projects"))
         keywords = self._as_list(signals.get("keywords"))
+        evidence = self._as_list(signals.get("evidence"))
 
-        prompts = self._build_prompt_seeds(skills, projects, keywords)
+        llm_questions = self._generate_questions_with_llm(
+            raw_text=str(state.get("raw_text", "")),
+            sections=sections,
+            signals={
+                "skills": skills,
+                "projects": projects,
+                "keywords": keywords,
+                "evidence": evidence,
+            },
+        )
+        if llm_questions is not None:
+            return {"questions": llm_questions}
+
+        prompts = self._build_prompt_seeds(skills, projects, keywords, evidence)
         questions = [
             self._make_question(index=idx + 1, seed=seed)
             for idx, seed in enumerate(prompts[:15])
         ]
         return {"questions": questions}
+
+    def _generate_questions_with_llm(
+        self,
+        *,
+        raw_text: str,
+        sections: dict[str, object],
+        signals: dict[str, object],
+    ) -> list[dict[str, object]] | None:
+        model = get_generation_model()
+        if model is None:
+            return None
+
+        try:
+            messages = build_question_generation_messages(
+                raw_text=raw_text,
+                sections=sections,
+                signals=signals,
+            )
+            response = model.invoke(messages)
+            return self._parse_llm_questions(response)
+        except Exception:
+            return None
+
+    def _parse_llm_questions(self, response: object) -> list[dict[str, object]] | None:
+        content = getattr(response, "content", response)
+        if isinstance(content, list):
+            content = "\n".join(
+                str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        if not isinstance(content, str) or not content.strip():
+            return None
+
+        payload_text = self._extract_json_object(content)
+        if payload_text is None:
+            return None
+
+        try:
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError:
+            return None
+
+        questions = payload.get("questions") if isinstance(payload, dict) else None
+        if not isinstance(questions, list) or not questions:
+            return None
+
+        parsed: list[dict[str, object]] = []
+        for index, item in enumerate(questions[:15]):
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category", "tech"))
+            if category not in self._CATEGORIES:
+                category = "tech"
+
+            difficulty = item.get("difficulty", 3)
+            if not isinstance(difficulty, int) or not 1 <= difficulty <= 5:
+                difficulty = 3
+
+            question_text = str(item.get("question", "")).strip()
+            if not question_text:
+                continue
+
+            expected_points = item.get("expected_points", [])
+            if not isinstance(expected_points, list):
+                expected_points = []
+            expected_points = [
+                point.strip()
+                for point in expected_points
+                if isinstance(point, str) and point.strip()
+            ][:3]
+            if not expected_points:
+                expected_points = [
+                    "Problem context and constraints",
+                    "Technical choices and trade-offs",
+                    "Measured outcome and lessons learned",
+                ]
+
+            followups = item.get("followups", [])
+            if not isinstance(followups, list):
+                followups = []
+            followups = [
+                followup.strip()
+                for followup in followups
+                if isinstance(followup, str) and followup.strip()
+            ][:2]
+            if not followups:
+                followups = [
+                    "What constraints most influenced your decision?",
+                    "What would you improve if implementing this again?",
+                ]
+
+            parsed.append(
+                {
+                    "id": f"q{index + 1:02d}",
+                    "category": category,
+                    "difficulty": difficulty,
+                    "question": question_text,
+                    "expected_points": expected_points,
+                    "followups": followups,
+                }
+            )
+
+        if not parsed:
+            return None
+        return parsed
+
+    def _extract_json_object(self, text: str) -> str | None:
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(
+                r"^```(?:json)?", "", stripped, flags=re.IGNORECASE
+            ).strip()
+            stripped = re.sub(r"```$", "", stripped).strip()
+
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        return stripped[start : end + 1]
 
     def _as_list(self, value: object) -> list[str]:
         if not isinstance(value, list):
@@ -337,7 +537,11 @@ class GenerateQuestionsNode(BaseNode):
         return [item for item in value if isinstance(item, str) and item.strip()]
 
     def _build_prompt_seeds(
-        self, skills: list[str], projects: list[str], keywords: list[str]
+        self,
+        skills: list[str],
+        projects: list[str],
+        keywords: list[str],
+        evidence: list[str],
     ) -> list[tuple[str, str]]:
         seeds: list[tuple[str, str]] = []
 
@@ -351,6 +555,10 @@ class GenerateQuestionsNode(BaseNode):
 
         for keyword in keywords:
             seeds.append(("deep-dive", f"{keyword}"))
+
+        for item in evidence:
+            seeds.append(("project", f"{item}"))
+            seeds.append(("deep-dive", f"{item}"))
 
         if not seeds:
             seeds = [
