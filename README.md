@@ -29,7 +29,7 @@ The response includes both structured JSON and Markdown for interviewer-friendly
 
 Pipeline:
 
-`extract_text -> parse_sections -> extract_signals -> generate_questions -> rate_difficulty -> format_output`
+`extract_text -> parse_sections -> extract_signals -> generate_questions -> rate_difficulty -> validate_questions -> format_output`
 
 ## Quick Start (Local)
 
@@ -45,6 +45,14 @@ uv sync --all-packages
 uv run uvicorn app.main:app --reload
 ```
 
+1. Configure LLM provider (for production-quality generation):
+
+```bash
+cp .env.example .env
+```
+
+Then set `INTERVIEWGRAPH_LLM_PROVIDER`, `INTERVIEWGRAPH_LLM_MODEL`, and the matching API key.
+
 1. Open API docs:
 
 - `http://127.0.0.1:8000/docs`
@@ -53,6 +61,7 @@ uv run uvicorn app.main:app --reload
 
 - `POST /api/v1/interview-questions` for text input
 - `POST /api/v1/interview-questions/upload` for PDF upload (multipart/form-data)
+- Response includes `generation_mode` (`llm` or `fallback`)
 
 Example JSON payload:
 
@@ -60,6 +69,32 @@ Example JSON payload:
 {
   "resume_text": "Summary ... Skills ... Projects ..."
 }
+```
+
+## Production LLM Setup
+
+- Runtime variables:
+  - `INTERVIEWGRAPH_LLM_PROVIDER`: `openai` or `anthropic`
+  - `INTERVIEWGRAPH_LLM_MODEL`: model id (for example `gpt-4o-mini`)
+  - `INTERVIEWGRAPH_LLM_TEMPERATURE`: float value
+- Required key by provider:
+  - `openai` -> `OPENAI_API_KEY`
+  - `anthropic` -> `ANTHROPIC_API_KEY`
+
+If provider config or API key is missing, generation falls back to deterministic question templates.
+
+## Staging Quality Check
+
+Run a smoke quality check using a sample resume:
+
+```bash
+PYTHONPATH=. uv run python scripts/staging_quality_check.py --resume-file docs/samples/staging_resume.txt
+```
+
+For local environments without API keys, use fallback mode:
+
+```bash
+PYTHONPATH=. uv run python scripts/staging_quality_check.py --allow-fallback
 ```
 
 ## Container Usage

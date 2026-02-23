@@ -49,6 +49,7 @@ class ExtractTextNode(BaseNode):
                 "questions": [],
                 "markdown": "",
                 "errors": [],
+                "generation_mode": "fallback",
             }
 
         if isinstance(resume_path, str) and resume_path.strip():
@@ -73,6 +74,7 @@ class ExtractTextNode(BaseNode):
                             retryable=False,
                         )
                     ],
+                    "generation_mode": "fallback",
                 }
 
             try:
@@ -97,6 +99,7 @@ class ExtractTextNode(BaseNode):
                             retryable=True,
                         )
                     ],
+                    "generation_mode": "fallback",
                 }
 
             if not loaded_text:
@@ -119,6 +122,7 @@ class ExtractTextNode(BaseNode):
                             retryable=True,
                         )
                     ],
+                    "generation_mode": "fallback",
                 }
 
             return {
@@ -133,6 +137,7 @@ class ExtractTextNode(BaseNode):
                 "questions": [],
                 "markdown": "",
                 "errors": [],
+                "generation_mode": "fallback",
             }
 
         return {
@@ -154,6 +159,7 @@ class ExtractTextNode(BaseNode):
                     retryable=False,
                 )
             ],
+            "generation_mode": "fallback",
         }
 
 
@@ -369,7 +375,7 @@ class GenerateQuestionsNode(BaseNode):
     def execute(self, state):
         existing_errors = list(state.get("errors", []))
         if existing_errors:
-            return {"questions": []}
+            return {"questions": [], "generation_mode": "fallback"}
 
         sections = state.get("sections")
         signals = state.get("signals")
@@ -403,14 +409,14 @@ class GenerateQuestionsNode(BaseNode):
             },
         )
         if llm_questions is not None:
-            return {"questions": llm_questions}
+            return {"questions": llm_questions, "generation_mode": "llm"}
 
         prompts = self._build_prompt_seeds(skills, projects, keywords, evidence)
         questions = [
             self._make_question(index=idx + 1, seed=seed)
             for idx, seed in enumerate(prompts[:15])
         ]
-        return {"questions": questions}
+        return {"questions": questions, "generation_mode": "fallback"}
 
     def _generate_questions_with_llm(
         self,
@@ -902,6 +908,7 @@ class FormatOutputNode(BaseNode):
     def execute(self, state):
         questions = state.get("questions")
         errors = state.get("errors")
+        generation_mode = state.get("generation_mode", "fallback")
 
         if not isinstance(errors, list):
             errors = []
@@ -910,6 +917,7 @@ class FormatOutputNode(BaseNode):
             return {
                 "questions": [],
                 "markdown": "",
+                "generation_mode": "fallback",
                 "errors": errors
                 + [
                     _error_item(
@@ -922,7 +930,11 @@ class FormatOutputNode(BaseNode):
             }
 
         markdown = self._render_markdown(questions)
-        return {"questions": questions, "markdown": markdown}
+        return {
+            "questions": questions,
+            "markdown": markdown,
+            "generation_mode": str(generation_mode),
+        }
 
     def _render_markdown(self, questions: list[object]) -> str:
         lines: list[str] = ["# Interview Questions", ""]

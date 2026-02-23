@@ -41,6 +41,7 @@ def _has_provider_key() -> bool:
 def _quality_report(result: dict[str, object]) -> dict[str, object]:
     questions = result.get("questions", [])
     errors = result.get("errors", [])
+    generation_mode = str(result.get("generation_mode", "fallback"))
 
     if not isinstance(questions, list):
         questions = []
@@ -65,6 +66,7 @@ def _quality_report(result: dict[str, object]) -> dict[str, object]:
 
     unique_categories = sorted(set(categories))
     return {
+        "generation_mode": generation_mode,
         "question_count": len(questions),
         "unique_categories": unique_categories,
         "category_count": len(unique_categories),
@@ -112,11 +114,16 @@ def main() -> int:
     question_count = _as_int(report.get("question_count"), 0)
     category_count = _as_int(report.get("category_count"), 0)
 
+    generation_mode = str(report.get("generation_mode", "fallback"))
+
     if question_count != 15:
         return 1
 
     min_categories = 3 if llm_ready else 2
     if category_count < min_categories:
+        return 1
+
+    if llm_ready and generation_mode != "llm":
         return 1
     return 0
 
