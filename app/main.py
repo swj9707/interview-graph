@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -8,6 +9,22 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from casts.resume_ingestor.graph import resume_ingestor_graph
+
+
+def _load_runtime_env() -> None:
+    """Loads local env files for API runtime when available."""
+
+    try:
+        from dotenv import load_dotenv
+    except Exception:
+        return
+
+    project_root = Path(__file__).resolve().parents[1]
+    load_dotenv(project_root / ".env", override=False)
+    load_dotenv(project_root / ".env.local", override=False)
+
+
+_load_runtime_env()
 
 app = FastAPI(title="InterviewGraph API", version="0.1.0")
 
@@ -21,6 +38,7 @@ class GenerateResponse(BaseModel):
     questions: list[dict[str, object]]
     markdown: str
     errors: list[dict[str, object]]
+    generation_mode: str = "fallback"
 
 
 @app.get("/health")
@@ -43,14 +61,14 @@ def generate_interview_questions(payload: GenerateRequest) -> GenerateResponse:
         questions=result.get("questions", []),
         markdown=result.get("markdown", ""),
         errors=result.get("errors", []),
+        generation_mode=str(result.get("generation_mode", "fallback")),
     )
 
 
 @app.post("/api/v1/interview-questions/upload", response_model=GenerateResponse)
 async def generate_from_pdf(file: Annotated[UploadFile, File(...)]) -> GenerateResponse:
-    if file.content_type != "application/pdf" and not file.filename.lower().endswith(
-        ".pdf"
-    ):
+    filename = file.filename or ""
+    if file.content_type != "application/pdf" and not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported.")
 
     content = await file.read()
@@ -77,4 +95,5 @@ async def generate_from_pdf(file: Annotated[UploadFile, File(...)]) -> GenerateR
         questions=result.get("questions", []),
         markdown=result.get("markdown", ""),
         errors=result.get("errors", []),
+        generation_mode=str(result.get("generation_mode", "fallback")),
     )

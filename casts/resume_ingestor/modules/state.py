@@ -60,6 +60,7 @@ class OutputState(TypedDict):
     questions: list[InterviewQuestion]
     markdown: str
     errors: list[ErrorItem]
+    generation_mode: str
 
 
 class State(MessagesState):
@@ -73,3 +74,4 @@ class State(MessagesState):
     questions: list[InterviewQuestion]
     markdown: str
     errors: list[ErrorItem]
+    generation_mode: str
