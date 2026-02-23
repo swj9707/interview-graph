@@ -24,6 +24,7 @@ class ResumeSignals(TypedDict):
     skills: list[str]
     projects: list[str]
     keywords: list[str]
+    evidence: list[str]
 
 
 class InterviewQuestion(TypedDict):
