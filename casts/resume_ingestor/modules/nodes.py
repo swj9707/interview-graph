@@ -685,6 +685,29 @@ class ValidateQuestionsNode(BaseNode):
         "system": 4,
         "deep-dive": 4,
     }
+    _SEMANTIC_STOPWORDS: set[str] = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "at",
+        "did",
+        "do",
+        "for",
+        "how",
+        "in",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "to",
+        "what",
+        "when",
+        "with",
+        "you",
+        "your",
+    }
 
     def execute(self, state):
         existing_errors = list(state.get("errors", []))
@@ -726,16 +749,25 @@ class ValidateQuestionsNode(BaseNode):
 
         deduped_questions: list[dict[str, object]] = []
         seen_questions: set[str] = set()
+        seen_semantic_tokens: list[set[str]] = []
         duplicate_count = 0
+        near_duplicate_count = 0
         for question in typed_questions:
-            normalized = self._normalize_text(str(question.get("question", "")))
+            raw_question = str(question.get("question", ""))
+            normalized = self._normalize_text(raw_question)
             if not normalized:
                 duplicate_count += 1
                 continue
+            semantic_tokens = self._semantic_tokens(raw_question)
             if normalized in seen_questions:
                 duplicate_count += 1
                 continue
+            if self._is_semantic_duplicate(semantic_tokens, seen_semantic_tokens):
+                near_duplicate_count += 1
+                continue
+
             seen_questions.add(normalized)
+            seen_semantic_tokens.append(semantic_tokens)
             deduped_questions.append(dict(question))
 
         generic_count = 0
@@ -769,6 +801,8 @@ class ValidateQuestionsNode(BaseNode):
         notes: list[str] = []
         if duplicate_count:
             notes.append(f"removed {duplicate_count} duplicate/empty questions")
+        if near_duplicate_count:
+            notes.append(f"removed {near_duplicate_count} semantic near-duplicates")
         if generic_count:
             notes.append(f"rewrote {generic_count} generic questions")
         if fill_count:
@@ -805,6 +839,34 @@ class ValidateQuestionsNode(BaseNode):
             seen.add(lowered)
             evidence.append(item)
         return evidence
+
+    def _semantic_tokens(self, question_text: str) -> set[str]:
+        lowered = question_text.lower()
+        return {
+            token
+            for token in re.findall(r"[a-z0-9]+", lowered)
+            if len(token) >= 4 and token not in self._SEMANTIC_STOPWORDS
+        }
+
+    def _is_semantic_duplicate(
+        self, candidate: set[str], seen_candidates: list[set[str]]
+    ) -> bool:
+        if not candidate:
+            return False
+
+        for existing in seen_candidates:
+            if not existing:
+                continue
+
+            overlap = len(candidate & existing)
+            union = len(candidate | existing)
+            jaccard = overlap / union if union else 0.0
+            containment = overlap / min(len(candidate), len(existing))
+
+            if jaccard >= 0.68 or containment >= 0.8:
+                return True
+
+        return False
 
     def _is_generic_question(self, question: str, evidence_terms: list[str]) -> bool:
         normalized_question = question.lower()
