@@ -265,3 +265,44 @@ def test_validate_questions_node_rewrites_generic_question_using_evidence() -> N
     assert len(result["questions"]) == 15
     rewritten = result["questions"][0]["question"].lower()
     assert "kubernetes" in rewritten or "realtime fraud detection" in rewritten
+
+
+def test_validate_questions_node_removes_semantic_near_duplicates() -> None:
+    node = ValidateQuestionsNode()
+    result = node(
+        {
+            "signals": {
+                "skills": ["API Gateway", "Rate Limiting"],
+                "projects": ["Traffic shaping platform"],
+                "keywords": ["burst", "throughput"],
+            },
+            "questions": [
+                {
+                    "id": "q01",
+                    "category": "system",
+                    "difficulty": 4,
+                    "question": "How did you design API gateway rate limiting for burst traffic?",
+                    "expected_points": ["Context"],
+                    "followups": ["Why this design?"],
+                },
+                {
+                    "id": "q02",
+                    "category": "system",
+                    "difficulty": 4,
+                    "question": "What approach did you take to implement burst-traffic rate limiting at the API gateway?",
+                    "expected_points": ["Context"],
+                    "followups": ["What trade-offs?"],
+                },
+            ],
+            "errors": [],
+        }
+    )
+
+    assert len(result["questions"]) == 15
+    similar_count = sum(
+        1
+        for question in result["questions"]
+        if "api gateway" in question["question"].lower()
+        and "rate limiting" in question["question"].lower()
+    )
+    assert similar_count == 1
